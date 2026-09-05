@@ -1,0 +1,43 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source "../**/*.blade.php";
+@source "../**/*.js";
+
+@theme {
+    --color-dark-bg: #0d1117;
+    --color-dark-surface: #161b22;
+    --color-dark-elevated: #21262d;
+    --color-dark-border: #30363d;
+    --color-dark-text: #f0f6fc;
+    --color-dark-muted: #8b949e;
+    --color-sky-accent: #38bdf8;
+    --color-danger-accent: #f87171;
+}
+
+[x-cloak] {
+    display: none !important;
+}
+
+/* Minimalist Dark Mode Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #0d1117;
+}
+::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #484f58;
+}
+
+/* Selection highlight */
+::selection {
+    background: rgba(56, 189, 248, 0.25);
+    color: #38bdf8;
+}

@@ -1,0 +1,33 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\User;
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
+
+/**
+ * Template example for SuperadminSeeder.
+ * Copy this file to `SuperadminSeeder.php` (which is gitignored) and configure credentials.
+ */
+class SuperadminSeederExample extends Seeder
+{
+    public function run(): void
+    {
+        $email = env('SUPERADMIN_EMAIL', 'admin@example.com');
+        $password = env('SUPERADMIN_PASSWORD', 'change-this-password');
+        $name = env('SUPERADMIN_NAME', 'Superadmin');
+
+        User::updateOrCreate(
+            ['email' => $email],
+            [
+                'name' => $name,
+                'password' => Hash::make($password),
+                'status' => 'approved',
+                'is_superadmin' => true,
+                'request_note' => 'System Superadmin Account',
+                'approved_at' => now(),
+            ]
+        );
+    }
+}
