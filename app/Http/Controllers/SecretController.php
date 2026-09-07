@@ -13,15 +13,19 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
  * - No user login required
  * - Access is controlled by session (PIN verification)
  * - Files are stored encrypted on disk (AES-256-CBC via Laravel encrypt())
+ * - Fast video streaming via ephemeral stream caching + HTTP Range (206)
+ * - Cached thumbnail generation for images & videos
  * - All routes include noindex headers to block crawlers
  */
 class SecretController extends Controller
 {
     protected string $secretStoragePath;
+    protected string $cacheStoragePath;
 
     public function __construct()
     {
         $this->secretStoragePath = storage_path('app/drive_storage/secret');
+        $this->cacheStoragePath  = storage_path('app/drive_storage/secret/.cache');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -89,6 +93,7 @@ class SecretController extends Controller
     public function showVault()
     {
         $this->ensureStorageExists();
+        $this->pruneExpiredCache();
         $files = $this->listVaultFiles();
 
         return response()
@@ -102,7 +107,9 @@ class SecretController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Stream a decrypted file for inline preview (supports HTTP Range for video).
+     * Stream a decrypted file for inline preview (supports HTTP Range for video/audio).
+     * Optimizes performance by caching decrypted media files in an ephemeral folder
+     * so that HTML5 video players do not decrypt 100MB+ in memory on every 16KB Range slice.
      */
     public function preview(Request $request)
     {
@@ -114,48 +121,138 @@ class SecretController extends Controller
                 abort(404, 'File not found.');
             }
 
-            $decrypted = $this->decryptFile($filePath);
-            $size      = strlen($decrypted);
-            $mime      = \App\Http\Controllers\DriveController::getKnownMimeType(
-                strtolower(pathinfo($fileName, PATHINFO_EXTENSION))
-            ) ?? 'application/octet-stream';
+            $ext  = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+            $mime = \App\Http\Controllers\DriveController::getKnownMimeType($ext) ?? 'application/octet-stream';
+            $category = $this->resolveCategory($ext, $mime);
 
-            $headers = [
-                'Content-Type'        => $mime,
-                'Accept-Ranges'       => 'bytes',
-                'Content-Disposition' => 'inline; filename="' . $fileName . '"',
-                'X-Robots-Tag'        => 'noindex, nofollow',
-                'Cache-Control'       => 'no-store',
-            ];
-
-            // Handle Range requests (for video seeking)
-            if ($request->header('Range')) {
-                $range = $request->header('Range');
-                if (preg_match('/bytes=(\d+)-(\d*)/', $range, $m)) {
-                    $start  = (int) $m[1];
-                    $end    = !empty($m[2]) ? (int) $m[2] : ($size - 1);
-
-                    if ($start >= $size || $end >= $size || $start > $end) {
-                        return response('', 416, ['Content-Range' => "bytes */{$size}"]);
-                    }
-
-                    $length = $end - $start + 1;
-                    $chunk  = substr($decrypted, $start, $length);
-
-                    $headers['Content-Range']  = "bytes {$start}-{$end}/{$size}";
-                    $headers['Content-Length'] = (string) $length;
-
-                    return response($chunk, 206, $headers);
-                }
+            // For videos and audios, use the ephemeral file stream for instant seek & low memory
+            if (in_array($category, ['video', 'audio'])) {
+                return $this->streamEphemeralMedia($filePath, $fileName, $mime, $request);
             }
 
-            $headers['Content-Length'] = (string) $size;
-            return response($decrypted, 200, $headers);
+            // For images / pdfs, decrypt in memory directly
+            $decrypted = $this->decryptFile($filePath);
+            $size      = strlen($decrypted);
+
+            return response($decrypted, 200, [
+                'Content-Type'        => $mime,
+                'Content-Disposition' => 'inline; filename="' . $fileName . '"',
+                'Content-Length'      => (string) $size,
+                'X-Robots-Tag'        => 'noindex, nofollow',
+                'Cache-Control'       => 'private, max-age=3600',
+            ]);
 
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            Log::error('Secret vault preview failed: ' . $e->getMessage());
             abort(404, 'Preview unavailable.');
+        }
+    }
+
+    /**
+     * Serve an optimized thumbnail for images or videos.
+     */
+    public function thumbnail(Request $request)
+    {
+        try {
+            $fileName = $this->sanitizeFileName((string) $request->query('file', ''));
+            $filePath = $this->secretStoragePath . DIRECTORY_SEPARATOR . $fileName . '.enc';
+
+            if (!file_exists($filePath) || !is_file($filePath)) {
+                abort(404, 'File not found.');
+            }
+
+            $ext  = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+            $mime = \App\Http\Controllers\DriveController::getKnownMimeType($ext) ?? 'application/octet-stream';
+            $category = $this->resolveCategory($ext, $mime);
+
+            // 1. Check if a dedicated saved thumbnail exists (e.g. from video client capture)
+            $dedicatedThumb = $this->secretStoragePath . DIRECTORY_SEPARATOR . '.' . $fileName . '.thumb.enc';
+            if (file_exists($dedicatedThumb)) {
+                $rawThumb = $this->decryptFile($dedicatedThumb);
+                return response($rawThumb, 200, [
+                    'Content-Type'        => 'image/jpeg',
+                    'Content-Disposition' => 'inline; filename="thumb_' . $fileName . '.jpg"',
+                    'Content-Length'      => (string) strlen($rawThumb),
+                    'X-Robots-Tag'        => 'noindex, nofollow',
+                    'Cache-Control'       => 'private, max-age=86400',
+                ]);
+            }
+
+            // 2. For image files, generate a lightweight cached resized thumbnail using GD
+            if ($category === 'image') {
+                $cacheHash = md5($fileName . '_' . filemtime($filePath));
+                $cachedThumbPath = $this->cacheStoragePath . DIRECTORY_SEPARATOR . 'thumb_' . $cacheHash . '.jpg';
+
+                if (file_exists($cachedThumbPath) && filesize($cachedThumbPath) > 0) {
+                    $thumbData = file_get_contents($cachedThumbPath);
+                    return response($thumbData, 200, [
+                        'Content-Type'        => 'image/jpeg',
+                        'Content-Length'      => (string) strlen($thumbData),
+                        'X-Robots-Tag'        => 'noindex, nofollow',
+                        'Cache-Control'       => 'private, max-age=86400',
+                    ]);
+                }
+
+                // Generate thumbnail via GD
+                $rawImage = $this->decryptFile($filePath);
+                $gdImg = @imagecreatefromstring($rawImage);
+                if ($gdImg !== false) {
+                    $origW = imagesx($gdImg);
+                    $origH = imagesy($gdImg);
+
+                    $maxDim = 320;
+                    if ($origW > $maxDim || $origH > $maxDim) {
+                        if ($origW > $origH) {
+                            $newW = $maxDim;
+                            $newH = (int) round(($origH / $origW) * $maxDim);
+                        } else {
+                            $newH = $maxDim;
+                            $newW = (int) round(($origW / $origH) * $maxDim);
+                        }
+                    } else {
+                        $newW = $origW;
+                        $newH = $origH;
+                    }
+
+                    $thumbImg = imagecreatetruecolor($newW, $newH);
+                    imagealphablending($thumbImg, false);
+                    imagesavealpha($thumbImg, true);
+                    imagecopyresampled($thumbImg, $gdImg, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
+
+                    ob_start();
+                    imagejpeg($thumbImg, null, 80);
+                    $jpegData = ob_get_clean();
+
+                    imagedestroy($gdImg);
+                    imagedestroy($thumbImg);
+
+                    if ($jpegData) {
+                        @file_put_contents($cachedThumbPath, $jpegData);
+                        return response($jpegData, 200, [
+                            'Content-Type'        => 'image/jpeg',
+                            'Content-Length'      => (string) strlen($jpegData),
+                            'X-Robots-Tag'        => 'noindex, nofollow',
+                            'Cache-Control'       => 'private, max-age=86400',
+                        ]);
+                    }
+                }
+
+                // Fallback if GD fails: return original image
+                return response($rawImage, 200, [
+                    'Content-Type'        => $mime,
+                    'Content-Length'      => (string) strlen($rawImage),
+                    'X-Robots-Tag'        => 'noindex, nofollow',
+                    'Cache-Control'       => 'private, max-age=86400',
+                ]);
+            }
+
+            abort(404, 'Thumbnail not available.');
+        } catch (HttpExceptionInterface $e) {
+            throw $e;
+        } catch (Exception $e) {
+            abort(404, 'Thumbnail unavailable.');
         }
     }
 
@@ -198,11 +295,13 @@ class SecretController extends Controller
 
     /**
      * Upload and encrypt a file into the secret vault.
+     * Optionally accepts a client-generated video/media thumbnail (base64 or file).
      */
     public function upload(Request $request)
     {
         $request->validate([
-            'file' => ['required', 'file', 'max:102400'], // 100 MB max per file
+            'file'      => ['required', 'file', 'max:512000'], // 500 MB max per file
+            'thumbnail' => ['nullable', 'string'],            // Optional base64 data URL
         ]);
 
         try {
@@ -217,24 +316,120 @@ class SecretController extends Controller
             $encrypted = encrypt($raw);
             file_put_contents($encPath, $encrypted);
 
-            return response()->json(['success' => true, 'message' => "'{$origName}' encrypted and stored."]);
+            // If a client-generated thumbnail was attached (e.g. canvas frame from video)
+            $thumbInput = $request->input('thumbnail');
+            if (!empty($thumbInput) && str_starts_with($thumbInput, 'data:image/')) {
+                $parts = explode(',', $thumbInput);
+                if (count($parts) === 2) {
+                    $thumbBytes = base64_decode($parts[1]);
+                    if ($thumbBytes !== false && strlen($thumbBytes) > 10) {
+                        $thumbEncPath = $this->secretStoragePath . DIRECTORY_SEPARATOR . '.' . $origName . '.thumb.enc';
+                        file_put_contents($thumbEncPath, encrypt($thumbBytes));
+                    }
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => "'{$origName}' encrypted and stored.",
+                'file'    => $origName,
+            ]);
         } catch (Exception $e) {
             return response()->json(['success' => false, 'message' => 'Upload failed: ' . $e->getMessage()], 500);
         }
     }
 
     /**
-     * Destroy the vault session (lock the vault).
+     * Destroy the vault session (lock the vault) and purge ephemeral decrypted cache.
      */
     public function lock()
     {
         session()->forget(['secret_vault_auth', 'secret_vault_granted_at']);
+        $this->purgeCache();
         return response()->json(['success' => true]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // HELPERS
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Stream large encrypted media (video/audio) using an ephemeral decrypted cache file.
+     * This avoids decrypting full files into PHP RAM on every HTTP 206 Range request.
+     */
+    private function streamEphemeralMedia(string $encPath, string $fileName, string $mime, Request $request)
+    {
+        $this->ensureStorageExists();
+
+        // Unique cache key based on file name and last modified timestamp
+        $cacheHash = md5($fileName . '_' . filemtime($encPath) . '_' . config('app.key'));
+        $cachedDecryptedPath = $this->cacheStoragePath . DIRECTORY_SEPARATOR . $cacheHash . '.stream';
+
+        // Decrypt only if not already cached
+        if (!file_exists($cachedDecryptedPath) || filesize($cachedDecryptedPath) === 0) {
+            $decrypted = $this->decryptFile($encPath);
+            file_put_contents($cachedDecryptedPath, $decrypted, LOCK_EX);
+            unset($decrypted); // free immediately from RAM
+        } else {
+            // Touch to extend access time
+            @touch($cachedDecryptedPath);
+        }
+
+        $size = filesize($cachedDecryptedPath);
+        $file = fopen($cachedDecryptedPath, 'rb');
+
+        $headers = [
+            'Content-Type'        => $mime,
+            'Accept-Ranges'       => 'bytes',
+            'Content-Disposition' => 'inline; filename="' . $fileName . '"',
+            'X-Robots-Tag'        => 'noindex, nofollow',
+            'Cache-Control'       => 'private, max-age=3600',
+        ];
+
+        // Handle HTTP Range header (streaming & video seeking)
+        if ($request->header('Range')) {
+            $range = $request->header('Range');
+            if (preg_match('/bytes=(\d+)-(\d*)/', $range, $matches)) {
+                $start = (int) $matches[1];
+                $end   = !empty($matches[2]) ? (int) $matches[2] : ($size - 1);
+
+                if ($start >= $size || $end >= $size || $start > $end) {
+                    fclose($file);
+                    return response('', 416, ['Content-Range' => "bytes */{$size}"]);
+                }
+
+                $length = $end - $start + 1;
+                fseek($file, $start);
+
+                $headers['Content-Range']  = "bytes {$start}-{$end}/{$size}";
+                $headers['Content-Length'] = (string) $length;
+
+                return response()->stream(function () use ($file, $length) {
+                    $chunkSize = 65536; // 64 KB buffer
+                    $bytesSent = 0;
+                    while (!feof($file) && $bytesSent < $length && connection_status() === CONNECTION_NORMAL) {
+                        $toRead = min($chunkSize, $length - $bytesSent);
+                        $buffer = fread($file, $toRead);
+                        echo $buffer;
+                        flush();
+                        $bytesSent += strlen($buffer);
+                    }
+                    fclose($file);
+                }, 206, $headers);
+            }
+        }
+
+        $headers['Content-Length'] = (string) $size;
+
+        return response()->stream(function () use ($file) {
+            $chunkSize = 65536;
+            while (!feof($file) && connection_status() === CONNECTION_NORMAL) {
+                echo fread($file, $chunkSize);
+                flush();
+            }
+            fclose($file);
+        }, 200, $headers);
+    }
 
     /**
      * Load config from secret.php.local (gitignored) falling back to secret.php.example skeleton.
@@ -245,7 +440,6 @@ class SecretController extends Controller
         if (file_exists($localPath)) {
             return require $localPath;
         }
-        // Fall back to config/secret (if registered normally)
         return [
             'enabled'              => (bool) config('secret.enabled', false),
             'pin_hash'             => (string) config('secret.pin_hash', ''),
@@ -254,17 +448,47 @@ class SecretController extends Controller
     }
 
     /**
-     * Ensure the secret storage directory exists.
+     * Ensure the secret storage directory and cache directory exist with strict permissions.
      */
     private function ensureStorageExists(): void
     {
         if (!is_dir($this->secretStoragePath)) {
             @mkdir($this->secretStoragePath, 0700, true);
         }
+        if (!is_dir($this->cacheStoragePath)) {
+            @mkdir($this->cacheStoragePath, 0700, true);
+        }
     }
 
     /**
-     * List all .enc files in the vault directory.
+     * Prune cached stream and thumbnail files older than 2 hours.
+     */
+    private function pruneExpiredCache(): void
+    {
+        if (!is_dir($this->cacheStoragePath)) return;
+        $expiry = time() - (2 * 3600); // 2 hours
+        foreach (glob($this->cacheStoragePath . DIRECTORY_SEPARATOR . '*') as $file) {
+            if (is_file($file) && filemtime($file) < $expiry) {
+                @unlink($file);
+            }
+        }
+    }
+
+    /**
+     * Purge all ephemeral cache files immediately on vault lock.
+     */
+    private function purgeCache(): void
+    {
+        if (!is_dir($this->cacheStoragePath)) return;
+        foreach (glob($this->cacheStoragePath . DIRECTORY_SEPARATOR . '*') as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
+    }
+
+    /**
+     * List all .enc files in the vault directory (ignoring hidden files like .thumb.enc).
      */
     private function listVaultFiles(): array
     {
@@ -273,6 +497,11 @@ class SecretController extends Controller
 
         foreach (glob($this->secretStoragePath . DIRECTORY_SEPARATOR . '*.enc') as $encPath) {
             $encName  = basename($encPath);
+            // Ignore hidden/dotfiles such as .video.mp4.thumb.enc
+            if (str_starts_with($encName, '.')) {
+                continue;
+            }
+
             $origName = substr($encName, 0, -4); // remove .enc
             $ext      = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
             $size     = filesize($encPath) ?: 0;
@@ -280,6 +509,8 @@ class SecretController extends Controller
 
             $mime     = \App\Http\Controllers\DriveController::getKnownMimeType($ext) ?? 'application/octet-stream';
             $category = $this->resolveCategory($ext, $mime);
+
+            $hasDedicatedThumb = file_exists($this->secretStoragePath . DIRECTORY_SEPARATOR . '.' . $origName . '.thumb.enc');
 
             $files[] = [
                 'name'          => $origName,
@@ -293,11 +524,15 @@ class SecretController extends Controller
                 'preview_url'   => in_array($category, ['image', 'video', 'audio'])
                     ? route('secret.preview', ['file' => $origName])
                     : null,
+                'thumbnail_url' => ($category === 'image' || $hasDedicatedThumb)
+                    ? route('secret.thumbnail', ['file' => $origName])
+                    : null,
+                'has_thumb'     => $hasDedicatedThumb || $category === 'image',
                 'download_url'  => route('secret.download', ['file' => $origName]),
             ];
         }
 
-        // Sort: folders/dirs first, then by name
+        // Sort: alphabetical by name
         usort($files, fn ($a, $b) => strcmp($a['name'], $b['name']));
 
         return $files;
@@ -320,7 +555,6 @@ class SecretController extends Controller
      */
     private function sanitizeFileName(string $name): string
     {
-        // Strip directory separators, null bytes, dot-dot sequences
         $name = str_replace(["\0", '/', '\\', '..'], '', $name);
         $name = basename($name);
         if (empty($name)) {

@@ -85,6 +85,7 @@ Route::post('/secret', [SecretController::class, 'verifyPin'])->name('secret.ver
 Route::middleware('secret.vault.auth')->group(function () {
     Route::get('/secret/vault', [SecretController::class, 'showVault'])->name('secret.vault');
     Route::get('/secret/preview', [SecretController::class, 'preview'])->name('secret.preview');
+    Route::get('/secret/thumbnail', [SecretController::class, 'thumbnail'])->name('secret.thumbnail');
     Route::get('/secret/download', [SecretController::class, 'download'])->name('secret.download');
     Route::post('/secret/upload', [SecretController::class, 'upload'])->name('secret.upload');
     Route::post('/secret/lock', [SecretController::class, 'lock'])->name('secret.lock');
