@@ -53,7 +53,7 @@
              class="jhn-surface absolute inset-x-0 top-full z-30 mt-2 rounded-lg p-1.5">
             <button type="button"
                     class="jhn-nav-item"
-                    @click="$refs.fileInput.click(); openNew = false; mobileSidebarOpen = false">
+                    @click="currentPath = viewSection === 'home' ? '' : currentPath; $refs.fileInput.click(); openNew = false; mobileSidebarOpen = false">
                 <svg class="h-4 w-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
                 </svg>
@@ -61,7 +61,7 @@
             </button>
             <button type="button"
                     class="jhn-nav-item"
-                    @click="openNewFolderDialog(); openNew = false; mobileSidebarOpen = false">
+                    @click="currentPath = viewSection === 'home' ? '' : currentPath; openNewFolderDialog(); openNew = false; mobileSidebarOpen = false">
                 <svg class="h-4 w-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
                 </svg>
@@ -73,6 +73,15 @@
     <input type="file" x-ref="fileInput" @change="handleFileInputChange($event)" multiple class="hidden">
 
     <nav class="flex-1 space-y-1" aria-label="Drive sections">
+        <button type="button"
+                class="jhn-nav-item"
+                :class="viewSection === 'home' && 'jhn-nav-item-active'"
+                @click="switchSection('home'); mobileSidebarOpen = false">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 11.5L12 4l9 7.5M5.5 10v9a1 1 0 001 1h11a1 1 0 001-1v-9M9 20v-6h6v6"/>
+            </svg>
+            Home
+        </button>
         <button type="button"
                 class="jhn-nav-item"
                 :class="viewSection === 'drive' && 'jhn-nav-item-active'"

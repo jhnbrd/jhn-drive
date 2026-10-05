@@ -1,9 +1,17 @@
 window.driveApp = function driveApp() {
     return {
-        viewSection: 'drive', // 'drive' or 'shared'
+        viewSection: 'home',
         mobileSidebarOpen: false,
         items: [],
         sharedItems: [],
+        home: {
+            recent: [],
+            shared: [],
+            categories: [],
+            storage: {},
+            scanned_at: null
+        },
+        isHomeLoading: false,
         currentPath: '',
         parentPath: '',
         breadcrumbs: [{ name: 'My Drive', path: '' }],
@@ -21,6 +29,11 @@ window.driveApp = function driveApp() {
         uploadCancelled: false,
         isDragging: false,
         activeMenu: null,
+        selectedPaths: [],
+        selectionAnchor: null,
+        isBulkDownloading: false,
+        showDetailsModal: false,
+        detailsItem: null,
         stats: {
             percent_used: 0,
             used_human: '0 B',
@@ -40,8 +53,7 @@ window.driveApp = function driveApp() {
 
         init() {
             this.$watch('viewMode', val => localStorage.setItem('jhn_drive_view', val));
-            this.loadFiles('');
-            this.loadStats();
+            this.loadHome();
             this.loadSharedLinks();
         },
 
@@ -51,6 +63,20 @@ window.driveApp = function driveApp() {
 
         get files() {
             return this.filteredItems.filter(i => !i.is_dir);
+        },
+
+        get selectedItems() {
+            const selected = new Set(this.selectedPaths);
+            return this.items.filter(item => selected.has(item.path));
+        },
+
+        get selectionCount() {
+            return this.selectedPaths.length;
+        },
+
+        get allVisibleSelected() {
+            return this.filteredItems.length > 0
+                && this.filteredItems.every(item => this.selectedPaths.includes(item.path));
         },
 
         get filteredItems() {
@@ -68,12 +94,35 @@ window.driveApp = function driveApp() {
         switchSection(section) {
             this.viewSection = section;
             this.searchQuery = '';
-            if (section === 'shared') {
+
+            if (section === 'home') {
+                this.loadHome();
+            } else if (section === 'shared') {
                 this.loadSharedLinks();
             } else {
                 this.loadFiles(this.currentPath);
             }
         },
+
+        async loadHome(refresh = false) {
+            this.isHomeLoading = true;
+            try {
+                const suffix = refresh ? '?refresh=1' : '';
+                const res = await fetch('/api/home' + suffix);
+                const data = await res.json();
+                if (data.success) {
+                    this.home = data;
+                    this.stats = { ...data.storage, upload_limits: data.upload_limits };
+                } else {
+                    this.showToast('Home unavailable', data.message || 'Unable to load Home.', 'error');
+                }
+            } catch (err) {
+                this.showToast('Network Error', err.message, 'error');
+            } finally {
+                this.isHomeLoading = false;
+            }
+        },
+
 
         async loadFiles(path = '') {
             this.isLoading = true;
@@ -85,6 +134,7 @@ window.driveApp = function driveApp() {
                     this.currentPath = data.current_path;
                     this.parentPath = data.parent_path;
                     this.breadcrumbs = data.breadcrumbs;
+                    this.clearSelection();
                 } else {
                     this.showToast('Error', data.message || 'Failed to load directory.', 'error');
                 }
@@ -124,6 +174,23 @@ window.driveApp = function driveApp() {
             this.loadFiles(path);
         },
 
+        openItemLocation(item) {
+            this.viewSection = 'drive';
+            this.searchQuery = '';
+            this.loadFiles(item.parent_path || '');
+        },
+
+        categoryColor(key) {
+            return {
+                image: '#22d3ee',
+                video: '#a78bfa',
+                document: '#60a5fa',
+                audio: '#34d399',
+                archive: '#fbbf24',
+                other: '#64748b'
+            }[key] || '#64748b';
+        },
+
         openMediaModal(file) {
             if (!file.preview_url) return;
             this.previewFile = file;
@@ -137,6 +204,139 @@ window.driveApp = function driveApp() {
 
         toggleMenu(path) {
             this.activeMenu = this.activeMenu === path ? null : path;
+        },
+
+        isSelected(path) {
+            return this.selectedPaths.includes(path);
+        },
+
+        toggleSelection(item, event = null) {
+            const selected = new Set(this.selectedPaths);
+
+            if (event?.shiftKey && this.selectionAnchor) {
+                const anchorIndex = this.filteredItems.findIndex(candidate => candidate.path === this.selectionAnchor);
+                const itemIndex = this.filteredItems.findIndex(candidate => candidate.path === item.path);
+
+                if (anchorIndex !== -1 && itemIndex !== -1) {
+                    const [start, end] = anchorIndex < itemIndex
+                        ? [anchorIndex, itemIndex]
+                        : [itemIndex, anchorIndex];
+                    this.filteredItems.slice(start, end + 1).forEach(candidate => selected.add(candidate.path));
+                }
+            } else if (selected.has(item.path)) {
+                selected.delete(item.path);
+            } else {
+                selected.add(item.path);
+            }
+
+            this.selectedPaths = Array.from(selected);
+            this.selectionAnchor = item.path;
+            this.activeMenu = null;
+        },
+
+        toggleSelectAll() {
+            if (this.allVisibleSelected) {
+                const visible = new Set(this.filteredItems.map(item => item.path));
+                this.selectedPaths = this.selectedPaths.filter(path => !visible.has(path));
+            } else {
+                this.selectedPaths = Array.from(new Set([
+                    ...this.selectedPaths,
+                    ...this.filteredItems.map(item => item.path)
+                ]));
+            }
+        },
+
+        clearSelection() {
+            this.selectedPaths = [];
+            this.selectionAnchor = null;
+        },
+
+        activateItem(item, event = null) {
+            if (this.selectionCount > 0 || event?.ctrlKey || event?.metaKey || event?.shiftKey) {
+                this.toggleSelection(item, event);
+                return;
+            }
+
+            if (item.is_dir) {
+                this.navigateTo(item.path);
+            } else if (item.preview_url) {
+                this.openMediaModal(item);
+            } else {
+                this.showItemDetails(item);
+            }
+        },
+
+        showItemDetails(item) {
+            this.detailsItem = item;
+            this.showDetailsModal = true;
+            this.activeMenu = null;
+            this.$nextTick(() => this.$refs.detailsClose?.focus());
+        },
+
+        closeItemDetails() {
+            this.showDetailsModal = false;
+            this.detailsItem = null;
+        },
+
+        itemLocation(item) {
+            if (!item?.path || !item.path.includes('/')) return 'My Drive';
+            const parts = item.path.split('/');
+            parts.pop();
+            return 'My Drive / ' + parts.join(' / ');
+        },
+
+        formatDate(value) {
+            if (!value) return 'Unknown';
+            const parsed = new Date(value.replace(' ', 'T'));
+            return Number.isNaN(parsed.getTime())
+                ? value
+                : parsed.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+        },
+
+        async downloadSelected() {
+            const selected = this.selectedItems;
+            if (selected.length === 0 || this.isBulkDownloading) return;
+
+            if (selected.length === 1 && !selected[0].is_dir) {
+                window.location.assign(selected[0].download_url);
+                return;
+            }
+
+            this.isBulkDownloading = true;
+            try {
+                const res = await fetch('/api/download-selection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/zip, application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    body: JSON.stringify({ paths: selected.map(item => item.path) })
+                });
+
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.message || 'The selection could not be downloaded.');
+                }
+
+                const blob = await res.blob();
+                const disposition = res.headers.get('Content-Disposition') || '';
+                const match = disposition.match(/filename="?([^";]+)"?/i);
+                const filename = match?.[1] || 'jhn-drive-selection.zip';
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = filename;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                URL.revokeObjectURL(url);
+                this.showToast('Download ready', selected.length + ' items were packaged successfully.', 'success');
+            } catch (err) {
+                this.showToast('Download failed', err.message, 'error');
+            } finally {
+                this.isBulkDownloading = false;
+            }
         },
 
         openNewFolderDialog() {
@@ -165,7 +365,11 @@ window.driveApp = function driveApp() {
                 if (data.success) {
                     this.showNewFolderModal = false;
                     this.showToast('Success', data.message, 'success');
-                    this.loadFiles(this.currentPath);
+                    if (this.viewSection === 'home') {
+                        this.loadHome(true);
+                    } else {
+                        this.loadFiles(this.currentPath);
+                    }
                 } else {
                     this.showToast('Error', data.message || 'Could not create folder.', 'error');
                 }
@@ -194,7 +398,11 @@ window.driveApp = function driveApp() {
                 if (data.success) {
                     this.showDeleteModal = false;
                     this.showToast('Deleted', data.message, 'success');
-                    this.loadFiles(this.currentPath);
+                    if (this.viewSection === 'home') {
+                        this.loadHome(true);
+                    } else {
+                        this.loadFiles(this.currentPath);
+                    }
                     this.loadStats();
                     this.loadSharedLinks();
                 } else {
@@ -394,7 +602,10 @@ window.driveApp = function driveApp() {
                 }
 
                 if (completedFiles > 0) {
-                    await Promise.all([this.loadFiles(this.currentPath), this.loadStats()]);
+                    const contentReload = this.viewSection === 'home'
+                        ? this.loadHome(true)
+                        : this.loadFiles(this.currentPath);
+                    await Promise.all([contentReload, this.loadStats()]);
                 }
             } catch (err) {
                 if (!this.uploadCancelled) {

@@ -37,8 +37,10 @@ Route::middleware(['auth', EnsureApproved::class])->group(function () {
     // Drive File Management API
     Route::prefix('api')->name('drive.')->group(function () {
         Route::get('/files', [DriveController::class, 'listFiles'])->name('files');
+        Route::get('/home', [DriveController::class, 'home'])->name('home');
         Route::post('/upload', [DriveController::class, 'upload'])->name('upload');
         Route::post('/mkdir', [DriveController::class, 'mkdir'])->name('mkdir');
+        Route::post('/download-selection', [DriveController::class, 'downloadSelection'])->name('download-selection');
         Route::delete('/delete', [DriveController::class, 'delete'])->name('delete');
         Route::post('/rename', [DriveController::class, 'rename'])->name('rename');
         Route::get('/download', [DriveController::class, 'download'])->name('download');

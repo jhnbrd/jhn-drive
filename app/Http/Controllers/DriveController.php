@@ -7,6 +7,8 @@ use App\Models\User;
 use App\Services\DrivePathService;
 use App\Services\FileMetadataService;
 use App\Services\FileResponseService;
+use App\Services\HomeSummaryService;
+use App\Services\ZipArchiveService;
 use App\Support\UploadLimits;
 use Exception;
 use Illuminate\Http\JsonResponse;
@@ -27,6 +29,8 @@ class DriveController extends Controller
         private readonly DrivePathService $paths,
         private readonly FileMetadataService $metadata,
         private readonly FileResponseService $responses,
+        private readonly HomeSummaryService $homeSummary,
+        private readonly ZipArchiveService $archives,
     ) {}
 
     /**
@@ -71,6 +75,32 @@ class DriveController extends Controller
     }
 
     /**
+     * Return the cached filesystem-backed Home summary for the current user.
+     */
+    public function home(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $summary = $this->homeSummary->summary($user, $request->boolean('refresh'));
+
+            return response()->json([
+                'success' => true,
+                ...$summary,
+                'upload_limits' => UploadLimits::clientConfig(),
+            ]);
+        } catch (HttpExceptionInterface $e) {
+            throw $e;
+        } catch (Exception $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to load Home right now.',
+            ], 500);
+        }
+    }
+
+    /**
      * Get directory contents with full metadata for the current user.
      */
     public function listFiles(Request $request): JsonResponse
@@ -97,8 +127,8 @@ class DriveController extends Controller
 
             // Query active shared links for the user
             $userLinks = SharedLink::where('user_id', $user->id)
-                ->pluck('token', 'file_path')
-                ->toArray();
+                ->get()
+                ->keyBy(fn (SharedLink $link): string => str_replace('\\', '/', $link->file_path));
 
             // Process directories
             foreach ($rawDirs as $dirPath) {
@@ -109,7 +139,7 @@ class DriveController extends Controller
                 $normalizedRelative = str_replace('\\', '/', $dirPath);
 
                 $dirItemsCount = count(glob($dirFullPath.'/*') ?: []);
-                $shareToken = $userLinks[$normalizedRelative] ?? null;
+                $shareLink = $userLinks->get($normalizedRelative);
 
                 $items[] = [
                     'name' => $dirName,
@@ -118,12 +148,14 @@ class DriveController extends Controller
                     'extension' => '',
                     'size' => 0,
                     'human_size' => $dirItemsCount.' '.($dirItemsCount === 1 ? 'item' : 'items'),
+                    'item_count' => $dirItemsCount,
                     'mime_type' => 'directory',
                     'category' => 'folder',
                     'modified_at' => date('Y-m-d H:i:s', $modifiedTime),
                     'modified_human' => $this->formatTimeAgo($modifiedTime),
-                    'share_token' => $shareToken,
-                    'share_url' => $shareToken ? url('/s/'.$shareToken) : null,
+                    'share_token' => $shareLink?->token,
+                    'share_url' => $shareLink?->share_url,
+                    'downloads_count' => $shareLink?->downloads_count ?? 0,
                 ];
             }
 
@@ -147,7 +179,7 @@ class DriveController extends Controller
                 }
 
                 $category = $this->resolveCategory($extension, $mimeType);
-                $shareToken = $userLinks[$normalizedRelative] ?? null;
+                $shareLink = $userLinks->get($normalizedRelative);
 
                 $items[] = [
                     'name' => $fileName,
@@ -160,8 +192,9 @@ class DriveController extends Controller
                     'category' => $category,
                     'modified_at' => date('Y-m-d H:i:s', $modifiedTime),
                     'modified_human' => $this->formatTimeAgo($modifiedTime),
-                    'share_token' => $shareToken,
-                    'share_url' => $shareToken ? url('/s/'.$shareToken) : null,
+                    'share_token' => $shareLink?->token,
+                    'share_url' => $shareLink?->share_url,
+                    'downloads_count' => $shareLink?->downloads_count ?? 0,
                     'download_url' => route('drive.download', ['path' => $userRelPath]),
                     'preview_url' => in_array($category, ['image', 'video']) ? route('drive.preview', ['path' => $userRelPath]) : null,
                 ];
@@ -300,6 +333,10 @@ class DriveController extends Controller
                 ];
             }
 
+            if ($uploadedFiles !== []) {
+                $this->homeSummary->invalidate($user);
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => count($uploadedFiles).' file(s) uploaded successfully.',
@@ -345,6 +382,7 @@ class DriveController extends Controller
             }
 
             $disk->makeDirectory($targetRelative);
+            $this->homeSummary->invalidate($user);
 
             return response()->json([
                 'success' => true,
@@ -415,6 +453,7 @@ class DriveController extends Controller
                 $disk->move($oldDiskPath, $newDiskPath);
                 SharedLink::where('file_path', $oldDiskPath)->update(['file_path' => $newDiskPath]);
             }
+            $this->homeSummary->invalidate($user);
 
             return response()->json([
                 'success' => true,
@@ -468,6 +507,7 @@ class DriveController extends Controller
                 $disk->delete($cleanDiskPath);
                 SharedLink::where('file_path', $cleanDiskPath)->delete();
             }
+            $this->homeSummary->invalidate($user);
 
             return response()->json([
                 'success' => true,
@@ -517,6 +557,53 @@ class DriveController extends Controller
                 'success' => false,
                 'message' => 'The file could not be downloaded.',
             ], 404);
+        }
+    }
+
+    /**
+     * Download selected files and folders as a bounded ZIP archive.
+     */
+    public function downloadSelection(Request $request): BinaryFileResponse|JsonResponse
+    {
+        $validated = $request->validate([
+            'paths' => ['required', 'array', 'min:1', 'max:100'],
+            'paths.*' => ['required', 'string', 'distinct'],
+        ]);
+
+        try {
+            $user = Auth::user();
+            $disk = Storage::disk($this->disk);
+            $fullPaths = [];
+
+            foreach ($validated['paths'] as $path) {
+                $fullPaths[] = $disk->path($this->getSafePath($path, true, $user));
+            }
+
+            $zipPath = $this->archives->createFromPaths(
+                $this->getUserRootPath($user),
+                $fullPaths,
+            );
+            $filename = 'jhn-drive-selection-'.now()->format('Ymd-His').'.zip';
+
+            return response()
+                ->download($zipPath, $filename, ['Content-Type' => 'application/zip'])
+                ->deleteFileAfterSend(true);
+        } catch (HttpExceptionInterface $e) {
+            throw $e;
+        } catch (\RuntimeException $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        } catch (Exception $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'The selected items could not be downloaded.',
+            ], 500);
         }
     }
 
@@ -701,20 +788,11 @@ class DriveController extends Controller
     {
         try {
             $user = Auth::user();
-            $usedBytes = $user->usedStorageBytes();
-            $quotaBytes = User::STORAGE_QUOTA_BYTES;
-            $freeBytes = $user->remainingStorageBytes();
-            $percentUsed = $user->storagePercentage();
+            $storage = $this->homeSummary->filesystemSummary($user)['storage'];
 
             return response()->json([
                 'success' => true,
-                'used_bytes' => $usedBytes,
-                'quota_bytes' => $quotaBytes,
-                'free_bytes' => $freeBytes,
-                'percent_used' => $percentUsed,
-                'used_human' => $user->humanUsedStorage(),
-                'quota_human' => $user->humanStorageQuota(),
-                'free_human' => User::formatBytes($freeBytes),
+                ...$storage,
                 'upload_limits' => UploadLimits::clientConfig(),
                 'user' => [
                     'id' => $user->id,
