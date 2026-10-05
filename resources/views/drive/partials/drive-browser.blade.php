@@ -6,7 +6,7 @@
                 <!-- PROMINENT CENTERED EMPTY STATE -->
                 <div x-show="!isLoading && filteredItems.length === 0" 
                      x-cloak
-                     class="mx-auto max-w-lg rounded-3xl border border-[#3b4b66] bg-[#131822] p-10 text-center shadow-2xl mt-12">
+                     class="mx-auto mt-8 max-w-lg rounded-xl border border-[#3b4b66] bg-[#131822] p-6 text-center sm:mt-12 sm:p-10">
                     <div class="mx-auto flex h-24 w-24 items-center justify-center rounded-3xl bg-sky-500/15 text-sky-400 border border-sky-500/30 shadow-inner">
                         <svg class="h-12 w-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 15a4 4 0 004 4h10a4 4 0 004-4 4 4 0 00-3-3.87 5 5 0 00-9.6-1.5A4 4 0 003 15z" />
@@ -307,7 +307,7 @@
 
                     <!-- LIST VIEW -->
                     <div x-show="viewMode === 'list'" 
-                         class="overflow-hidden rounded-2xl border border-[#2d3a50] bg-[#131a26] shadow-xl">
+                         class="overflow-x-auto rounded-xl border border-[#2d3a50] bg-[#131a26]">
                         <table class="w-full text-left text-xs text-[#f8fafc]">
                             <thead class="border-b border-[#3b4b66] bg-[#0e1420] uppercase tracking-wider text-slate-200">
                                 <tr>

@@ -1,6 +1,7 @@
 window.driveApp = function driveApp() {
     return {
         viewSection: 'drive', // 'drive' or 'shared'
+        mobileSidebarOpen: false,
         items: [],
         sharedItems: [],
         currentPath: '',

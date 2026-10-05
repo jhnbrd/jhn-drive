@@ -17,10 +17,6 @@
     }
 }" class="flex min-h-screen flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 bg-[#0b0e14] text-[#f0f6fc]">
     
-    <!-- Ambient Background Glow -->
-    <div class="pointer-events-none fixed inset-0 overflow-hidden flex items-center justify-center">
-        <div class="h-[32rem] w-[32rem] rounded-full bg-sky-500/5 blur-3xl"></div>
-    </div>
 
     @if($isFolder)
         <!-- Shared Folder View -->
@@ -28,7 +24,7 @@
             <!-- Header -->
             <div class="flex flex-wrap items-center justify-between gap-4 border-b border-[#3b4b66] px-6 py-5 bg-[#0e1420] rounded-t-3xl">
                 <div class="flex items-center gap-3">
-                    <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 text-slate-950 shadow-md shadow-amber-500/30">
+                    <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-400/15 text-amber-300">
                         <svg class="h-6 w-6 stroke-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                         </svg>
@@ -158,7 +154,7 @@
             <!-- Header Branding -->
             <div class="flex items-center justify-between border-b border-[#3b4b66] pb-5">
                 <div class="flex items-center gap-3">
-                    <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-sky-600 text-slate-950 shadow-md shadow-sky-500/30">
+                    <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-400 text-slate-950">
                         <svg class="h-5 w-5 stroke-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3 15a4 4 0 004 4h10a4 4 0 004-4 4 4 0 00-3-3.87 5 5 0 00-9.6-1.5A4 4 0 003 15z" />
                         </svg>

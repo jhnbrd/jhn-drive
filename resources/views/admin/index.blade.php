@@ -6,20 +6,20 @@
 <div class="min-h-screen bg-[#0d1117] text-[#f0f6fc] pb-16">
     
     <!-- Top Bar -->
-    <header class="border-b border-[#3b4b66] bg-[#161d2a] px-6 py-4 flex items-center justify-between sticky top-0 z-30 shadow-md">
+    <header class="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 border-b border-[#263241] bg-[#0d1219]/95 px-4 py-3 sm:px-6">
         <div class="flex items-center gap-3">
-            <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-sky-600 text-slate-950 shadow-md shadow-sky-500/30">
+            <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-400 text-slate-950">
                 <svg class="h-5 w-5 stroke-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
                 </svg>
             </div>
             <div>
                 <h1 class="text-base font-bold tracking-tight text-white">JHN Drive • Superadmin Control Panel</h1>
-                <p class="text-[11px] text-slate-300">Registration Approvals & Quota Management</p>
+                <p class="hidden text-[11px] text-slate-400 sm:block">Registration approvals and quota management</p>
             </div>
         </div>
 
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2">
             <a href="{{ route('drive.index') }}" 
                class="flex items-center gap-2 rounded-xl border border-[#3b4b66] bg-[#1a2536] px-4 py-2 text-xs font-bold text-slate-200 hover:bg-[#263750] hover:text-white hover:border-sky-400 transition-colors shadow-sm">
                 <svg class="h-4 w-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

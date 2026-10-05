@@ -17,7 +17,7 @@
                     </button>
                 </div>
 
-                <div x-show="filteredSharedItems.length > 0" class="overflow-hidden rounded-2xl border border-[#2d3a50] bg-[#131a26] shadow-xl">
+                <div x-show="filteredSharedItems.length > 0" class="overflow-x-auto rounded-xl border border-[#2d3a50] bg-[#131a26]">
                     <table class="w-full text-left text-xs text-[#f8fafc]">
                         <thead class="border-b border-[#3b4b66] bg-[#0e1420] uppercase tracking-wider text-slate-200">
                             <tr>

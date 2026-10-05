@@ -7,17 +7,12 @@
 
     <title>@yield('title', 'JHN Drive | Minimalist Cloud Storage')</title>
 
-    <!-- Google Font: Inter -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
     <!-- Anti-Flash & SVG Reset Styles -->
     <style>
         html, body {
             background-color: #0d1117 !important;
             color: #f0f6fc !important;
-            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             margin: 0;
             padding: 0;
             -webkit-font-smoothing: antialiased;

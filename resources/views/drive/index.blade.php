@@ -8,8 +8,8 @@
      @dragover.prevent="isDragging = true" 
      @dragleave.prevent="onDragLeave($event)" 
      @drop.prevent="handleDrop($event)"
-     @keydown.escape.window="showPreviewModal = false; showNewFolderModal = false; showDeleteModal = false"
-     class="flex h-screen w-screen overflow-hidden bg-[#0b0e14] text-[#f8fafc]">
+     @keydown.escape.window="mobileSidebarOpen = false; showPreviewModal = false; showNewFolderModal = false; showRenameModal = false; showDeleteModal = false"
+     class="drive-shell relative flex h-[100dvh] w-full overflow-hidden">
 
     @include('drive.partials.drag-overlay')
     @include('drive.partials.sidebar')

@@ -5,17 +5,13 @@
 @section('content')
 <div class="flex min-h-screen flex-col items-center justify-center px-4 py-12 sm:px-6 lg:px-8 bg-[#0d1117] text-[#f0f6fc]">
     
-    <!-- Ambient Glow -->
-    <div class="pointer-events-none absolute inset-0 overflow-hidden flex items-center justify-center">
-        <div class="h-96 w-96 rounded-full bg-sky-500/5 blur-3xl"></div>
-    </div>
 
     <!-- Login Card -->
     <div class="relative w-full max-w-md rounded-3xl border border-[#3b4b66] bg-[#161d2a] p-8 shadow-2xl shadow-black/80">
         
         <!-- Brand Header -->
         <div class="flex flex-col items-center text-center mb-8">
-            <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-400 to-sky-600 text-slate-950 shadow-lg shadow-sky-500/30 mb-3">
+            <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-cyan-400 text-slate-950">
                 <svg class="h-7 w-7 stroke-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M3 15a4 4 0 004 4h10a4 4 0 004-4 4 4 0 00-3-3.87 5 5 0 00-9.6-1.5A4 4 0 003 15z" />
                 </svg>

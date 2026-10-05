@@ -62,9 +62,9 @@
     <!-- ========================================================================= -->
     <div x-show="showNewFolderModal" 
          x-cloak
-         class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+         class="mobile-sheet fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
         <div @click.outside="showNewFolderModal = false" 
-             class="w-full max-w-md rounded-3xl border border-[#3b4b66] bg-[#161d2a] p-6 shadow-2xl">
+             class="w-full max-w-md rounded-xl border border-[#3b4b66] bg-[#161d2a] p-5 sm:p-6">
             <h3 class="text-base font-bold text-white">Create New Folder</h3>
             <p class="mt-1 text-xs text-slate-300">Create inside <span class="font-mono text-sky-400 font-bold" x-text="'/' + currentPath"></span></p>
 
@@ -97,9 +97,9 @@
     <div x-show="showRenameModal" 
          x-cloak
          @keydown.escape.window="showRenameModal = false"
-         class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+         class="mobile-sheet fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
         <div @click.outside="showRenameModal = false" 
-             class="w-full max-w-md rounded-3xl border border-[#3b4b66] bg-[#161d2a] p-6 shadow-2xl">
+             class="w-full max-w-md rounded-xl border border-[#3b4b66] bg-[#161d2a] p-5 sm:p-6">
             <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-500/20 text-sky-400 border border-sky-500/40">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -140,9 +140,9 @@
     <!-- ========================================================================= -->
     <div x-show="showDeleteModal" 
          x-cloak
-         class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+         class="mobile-sheet fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
         <div @click.outside="showDeleteModal = false" 
-             class="w-full max-w-md rounded-3xl border border-rose-500/50 bg-[#161d2a] p-6 shadow-2xl">
+             class="w-full max-w-md rounded-xl border border-rose-500/50 bg-[#161d2a] p-5 sm:p-6">
             <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/40">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -185,7 +185,7 @@
                  x-transition:leave="transition ease-in duration-150"
                  x-transition:leave-start="transform translate-y-0 opacity-100"
                  x-transition:leave-end="transform translate-y-4 opacity-0"
-                 class="pointer-events-auto flex w-96 items-start gap-3 rounded-2xl border border-[#3b4b66] bg-[#161d2a] p-4 shadow-2xl backdrop-blur-md">
+                 class="pointer-events-auto flex w-[calc(100vw-1.5rem)] items-start gap-3 rounded-xl border border-[#3b4b66] bg-[#161d2a] p-4 sm:w-96">
                 
                 <div class="shrink-0">
                     <template x-if="toast.type === 'success'">

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" style="background-color: #070a0f; color-scheme: dark;">
+<html lang="en" style="background-color: #090c11; color-scheme: dark;">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,23 +12,20 @@
     {{-- Generic non-identifying title --}}
     <title>Authentication Required</title>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
         *, *::before, *::after { box-sizing: border-box; }
         html, body {
             margin: 0; padding: 0; height: 100%;
-            background-color: #070a0f;
+            background-color: #090c11;
             color: #e2e8f0;
-            font-family: 'Inter', system-ui, sans-serif;
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
             -webkit-font-smoothing: antialiased;
         }
         [x-cloak] { display: none !important; }
 
         .pin-grid {
-            background: radial-gradient(ellipse at 50% 0%, #0d1a2a 0%, #070a0f 70%);
+            background: #090c11;
         }
 
         /* Animated noise overlay */
@@ -42,16 +39,8 @@
         }
 
         .noise::before {
-            content: '';
-            position: fixed;
-            inset: -50%;
-            width: 200%;
-            height: 200%;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
-            opacity: 0.04;
-            animation: grain 8s steps(10) infinite;
-            pointer-events: none;
-            z-index: 0;
+            content: none;
+            display: none;
         }
 
         /* PIN dots */
@@ -65,7 +54,7 @@
         .pin-dot.filled {
             background: #38bdf8;
             border-color: #38bdf8;
-            box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+            box-shadow: none;
         }
         .pin-dot.error {
             background: #ef4444;

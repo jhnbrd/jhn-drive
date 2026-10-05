@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" style="background-color: #070a0f; color-scheme: dark;">
+<html lang="en" style="background-color: #090c11; color-scheme: dark;">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,27 +11,21 @@
 
     <title>Vault</title>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
         *, *::before, *::after { box-sizing: border-box; }
         html, body {
             margin: 0; padding: 0; min-height: 100%;
-            background-color: #070a0f;
+            background-color: #090c11;
             color: #e2e8f0;
-            font-family: 'Inter', system-ui, sans-serif;
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
             -webkit-font-smoothing: antialiased;
         }
         [x-cloak] { display: none !important; }
 
         /* Subtle grid bg */
         body {
-            background-image:
-                linear-gradient(rgba(56,189,248,0.02) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(56,189,248,0.02) 1px, transparent 1px);
-            background-size: 32px 32px;
+            background: #090c11;
         }
 
         /* File grid */
@@ -43,18 +37,16 @@
 
         /* File card */
         .vault-card {
-            border-radius: 16px;
-            border: 1px solid #1e2d3d;
-            background: rgba(13, 20, 33, 0.85);
+            border-radius: 10px;
+            border: 1px solid #263241;
+            background: #111821;
             overflow: hidden;
             cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            backdrop-filter: blur(8px);
+            transition: border-color 0.15s ease, background-color 0.15s ease;
         }
         .vault-card:hover {
-            border-color: rgba(56, 189, 248, 0.45);
-            transform: translateY(-3px);
-            box-shadow: 0 12px 36px rgba(56, 189, 248, 0.15);
+            border-color: #3b5268;
+            background: #151e29;
         }
 
         /* Thumbnail */
