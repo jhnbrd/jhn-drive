@@ -4,21 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\SharedLink;
 use App\Models\User;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class MediaPreviewAndFolderSharingTest extends TestCase
 {
-    use RefreshDatabase;
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-        Storage::fake('local_drive');
-    }
-
     public function test_user_can_share_folder_and_list_contents_publicly()
     {
         $user = User::factory()->create([

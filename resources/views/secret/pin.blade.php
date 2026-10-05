@@ -114,8 +114,7 @@
         .key-btn-submit:hover { background: rgba(56, 189, 248, 0.35); border-color: #38bdf8; }
     </style>
 
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="noise">
 

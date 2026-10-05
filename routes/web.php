@@ -5,6 +5,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DriveController;
 use App\Http\Controllers\SecretController;
 use App\Http\Controllers\ShareController;
+use App\Http\Middleware\EnsureApproved;
 use App\Http\Middleware\EnsureSuperadmin;
 use Illuminate\Support\Facades\Route;
 
@@ -16,10 +17,10 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
-    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
     Route::get('/request-access', [AuthController::class, 'showRequestAccess'])->name('request-access');
-    Route::post('/request-access', [AuthController::class, 'submitRequestAccess']);
+    Route::post('/request-access', [AuthController::class, 'submitRequestAccess'])->middleware('throttle:access-request');
 });
 
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout')->middleware('auth');
@@ -30,7 +31,7 @@ Route::post('/logout', [AuthController::class, 'logout'])->name('logout')->middl
 |--------------------------------------------------------------------------
 */
 
-Route::middleware('auth')->group(function () {
+Route::middleware(['auth', EnsureApproved::class])->group(function () {
     Route::get('/', [DriveController::class, 'index'])->name('drive.index');
 
     // Drive File Management API
@@ -64,10 +65,10 @@ Route::middleware('auth')->group(function () {
 */
 
 Route::prefix('s')->name('share.')->group(function () {
-    Route::get('/{token}', [ShareController::class, 'show'])->name('show');
-    Route::get('/{token}/preview', [ShareController::class, 'preview'])->name('preview');
-    Route::get('/{token}/download', [ShareController::class, 'download'])->name('download');
-    Route::get('/{token}/zip', [ShareController::class, 'downloadZip'])->name('zip');
+    Route::get('/{token}', [ShareController::class, 'show'])->name('show')->middleware('throttle:public-share-view');
+    Route::get('/{token}/preview', [ShareController::class, 'preview'])->name('preview')->middleware('throttle:public-share-view');
+    Route::get('/{token}/download', [ShareController::class, 'download'])->name('download')->middleware('throttle:public-share-download');
+    Route::get('/{token}/zip', [ShareController::class, 'downloadZip'])->name('zip')->middleware('throttle:public-share-download');
 });
 
 /*
@@ -80,7 +81,7 @@ Route::prefix('s')->name('share.')->group(function () {
 */
 
 Route::get('/secret', [SecretController::class, 'showPin'])->name('secret.pin');
-Route::post('/secret', [SecretController::class, 'verifyPin'])->name('secret.verify');
+Route::post('/secret', [SecretController::class, 'verifyPin'])->name('secret.verify')->middleware('throttle:secret-pin');
 
 Route::middleware('secret.vault.auth')->group(function () {
     Route::get('/secret/vault', [SecretController::class, 'showVault'])->name('secret.vault');

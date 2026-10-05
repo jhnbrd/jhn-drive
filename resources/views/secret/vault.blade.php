@@ -128,8 +128,7 @@
         ::-webkit-scrollbar-thumb:hover { background: #38bdf8; }
     </style>
 
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body>
 <div x-data="vaultApp()"
@@ -261,7 +260,19 @@
                 </svg>
             </div>
             <p class="text-sm font-semibold text-white" x-text="uploadProgressText || 'Encrypting & uploading...'"></p>
-            <p class="mt-1 text-xs text-slate-400 truncate px-2" x-text="uploadingFileName"></p>
+            <p class="mt-1 truncate px-2 text-xs text-slate-400" x-text="uploadingFileName"></p>
+            <div class="mt-4 h-2 w-full overflow-hidden rounded-full bg-[#253043]">
+                <div class="h-full bg-sky-500 transition-all duration-150" :style="'width: ' + uploadProgress + '%'"></div>
+            </div>
+            <div class="mt-2 flex items-center justify-between text-[11px] font-mono text-slate-400">
+                <span x-text="`${formatBytes(uploadBytesSent)} / ${formatBytes(uploadBytesTotal)}`"></span>
+                <span x-text="uploadProgress + '%'"></span>
+            </div>
+            <button type="button"
+                    @click="cancelUpload()"
+                    class="mt-4 rounded-lg border border-rose-500/40 bg-rose-950/30 px-4 py-2 text-xs font-bold text-rose-300 hover:bg-rose-600 hover:text-white">
+                Cancel upload
+            </button>
         </div>
     </div>
 
@@ -435,6 +446,7 @@
 
 <script>
 const FILES = @json($files);
+const UPLOAD_LIMITS = @json(\App\Support\UploadLimits::clientConfig());
 
 function vaultApp() {
     return {
@@ -447,6 +459,11 @@ function vaultApp() {
         isUploading: false,
         uploadingFileName: '',
         uploadProgressText: '',
+        uploadProgress: 0,
+        uploadBytesSent: 0,
+        uploadBytesTotal: 0,
+        activeUploadRequest: null,
+        uploadCancelled: false,
         toasts: [],
         videoThumbnails: {},
 
@@ -628,12 +645,28 @@ function vaultApp() {
         },
 
         async uploadFiles(files) {
-            for (const file of files) {
-                this.isUploading = true;
-                this.uploadingFileName = file.name;
-                this.uploadProgressText = 'Encrypting & uploading...';
+            if (this.isUploading) return;
 
-                try {
+            const queue = Array.from(files);
+            const oversized = queue.find(file => file.size > UPLOAD_LIMITS.max_file_bytes);
+            if (oversized) {
+                this.showToast('File too large', `${oversized.name} exceeds the server limit of ${UPLOAD_LIMITS.max_file_human}.`, 'error');
+                return;
+            }
+
+            this.isUploading = true;
+            this.uploadCancelled = false;
+            let completed = 0;
+
+            try {
+                for (const file of queue) {
+                    if (this.uploadCancelled) break;
+
+                    this.uploadingFileName = file.name;
+                    this.uploadProgressText = 'Preparing encrypted upload...';
+                    this.uploadProgress = 0;
+                    this.uploadBytesSent = 0;
+                    this.uploadBytesTotal = file.size;
                     let thumbnailData = null;
 
                     if (file.type.startsWith('video/')) {
@@ -647,36 +680,81 @@ function vaultApp() {
                         }
                     }
 
-                    this.uploadProgressText = 'Encrypting and storing...';
-                    const fd = new FormData();
-                    fd.append('file', file);
-                    if (thumbnailData) {
-                        fd.append('thumbnail', thumbnailData);
-                    }
+                    if (this.uploadCancelled) break;
+                    this.uploadProgressText = 'Uploading for encryption...';
+                    const data = await this.uploadVaultFile(file, thumbnailData);
+                    completed++;
 
-                    const res = await fetch('/secret/upload', {
-                        method: 'POST',
-                        headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
-                        body: fd,
-                    });
-                    const data = await res.json();
-                    if (data.success) {
-                        if (thumbnailData && data.file) {
-                            this.saveCachedThumbnail(data.file, thumbnailData);
-                        }
-                        this.showToast('Encrypted', data.message, 'success');
-                    } else {
-                        this.showToast('Upload Failed', data.message, 'error');
+                    if (thumbnailData && data.file) {
+                        this.saveCachedThumbnail(data.file, thumbnailData);
                     }
-                } catch (err) {
-                    this.showToast('Error', err.message, 'error');
-                } finally {
-                    this.isUploading = false;
-                    this.uploadingFileName = '';
-                    this.uploadProgressText = '';
+                    if (data.file && data.file !== file.name) {
+                        this.showToast('Duplicate renamed', `${file.name} was stored as ${data.file}.`, 'info');
+                    } else {
+                        this.showToast('Encrypted', data.message, 'success');
+                    }
                 }
+            } catch (err) {
+                if (!this.uploadCancelled) {
+                    this.showToast('Upload failed', err.message || 'The encrypted upload could not be completed.', 'error');
+                }
+            } finally {
+                this.activeUploadRequest = null;
+                this.isUploading = false;
+                this.uploadingFileName = '';
+                this.uploadProgressText = '';
             }
-            window.location.reload();
+
+            if (completed > 0) window.location.reload();
+        },
+
+        uploadVaultFile(file, thumbnailData) {
+            return new Promise((resolve, reject) => {
+                const data = new FormData();
+                data.append('file', file);
+                if (thumbnailData) data.append('thumbnail', thumbnailData);
+
+                const xhr = new XMLHttpRequest();
+                this.activeUploadRequest = xhr;
+                xhr.open('POST', '/secret/upload', true);
+                xhr.setRequestHeader('X-CSRF-TOKEN', document.querySelector('meta[name="csrf-token"]').content);
+                xhr.setRequestHeader('Accept', 'application/json');
+                xhr.upload.onprogress = event => {
+                    if (!event.lengthComputable) return;
+                    this.uploadBytesSent = Math.min(event.loaded, this.uploadBytesTotal);
+                    this.uploadProgress = Math.round((event.loaded / event.total) * 100);
+                };
+                xhr.onload = () => {
+                    let response = {};
+                    try {
+                        response = JSON.parse(xhr.responseText || '{}');
+                    } catch {
+                        reject(new Error(`The server returned an unreadable response (HTTP ${xhr.status}).`));
+                        return;
+                    }
+                    if (xhr.status >= 200 && xhr.status < 300 && response.success) {
+                        resolve(response);
+                    } else {
+                        reject(new Error(response.message || `Upload failed (HTTP ${xhr.status}).`));
+                    }
+                };
+                xhr.onerror = () => reject(new Error('The network connection was interrupted.'));
+                xhr.onabort = () => reject(new DOMException('Upload cancelled.', 'AbortError'));
+                xhr.send(data);
+            });
+        },
+
+        cancelUpload() {
+            this.uploadCancelled = true;
+            this.activeUploadRequest?.abort();
+            this.showToast('Upload cancelled', 'No additional vault files will be uploaded.', 'info');
+        },
+
+        formatBytes(bytes) {
+            if (!Number.isFinite(Number(bytes)) || Number(bytes) <= 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const index = Math.min(Math.floor(Math.log(Number(bytes)) / Math.log(1024)), units.length - 1);
+            return `${(Number(bytes) / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
         },
 
         showToast(title, message, type = 'info') {

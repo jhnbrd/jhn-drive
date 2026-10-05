@@ -3,13 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\SharedLink;
-use Exception;
+use App\Services\DrivePathService;
+use App\Services\FileMetadataService;
+use App\Services\FileResponseService;
+use App\Services\ZipArchiveService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
-use ZipArchive;
-use RecursiveIteratorIterator;
-use RecursiveDirectoryIterator;
 
 class ShareController extends Controller
 {
@@ -18,34 +17,24 @@ class ShareController extends Controller
      */
     protected string $disk = 'local_drive';
 
+    public function __construct(
+        private readonly DrivePathService $paths,
+        private readonly FileMetadataService $metadata,
+        private readonly FileResponseService $responses,
+        private readonly ZipArchiveService $archives,
+    ) {}
+
     /**
      * Display the public landing page for a shared token (single file or folder).
      */
     public function show(Request $request, string $token)
     {
         $link = SharedLink::where('token', $token)->firstOrFail();
-        $disk = Storage::disk($this->disk);
-        $cleanPath = ltrim(str_replace('\\', '/', $link->file_path), '/');
-        $fullPath = $disk->path($cleanPath);
-
-        $rootPath = realpath($disk->path(''));
-        $realFullPath = realpath($fullPath);
-
-        if (!$realFullPath || !str_starts_with(str_replace('\\', '/', $realFullPath), str_replace('\\', '/', $rootPath)) || !file_exists($realFullPath)) {
-            abort(404, 'The shared item no longer exists or is unavailable.');
-        }
+        $realFullPath = $this->resolveSharedItem($link);
 
         // Folder view
         if ($link->is_folder || is_dir($realFullPath)) {
-            $subPath = trim((string) $request->query('path', ''), '/\\');
-            $subPath = str_replace(["\0", '..'], '', $subPath);
-
-            $targetFolder = empty($subPath) ? $realFullPath : realpath($realFullPath . '/' . $subPath);
-            $normalizedFolder = str_replace('\\', '/', $realFullPath);
-
-            if (!$targetFolder || !str_starts_with(str_replace('\\', '/', $targetFolder), $normalizedFolder) || !is_dir($targetFolder)) {
-                abort(404, 'Folder not found.');
-            }
+            [$targetFolder, $subPath] = $this->resolveWithinSharedRoot($realFullPath, (string) $request->query('path', ''), true);
 
             // Read contents
             $dirEntries = scandir($targetFolder) ?: [];
@@ -53,32 +42,32 @@ class ShareController extends Controller
             $files = [];
 
             foreach ($dirEntries as $entry) {
-                if ($entry === '.' || $entry === '..') continue;
-                $entryFullPath = $targetFolder . '/' . $entry;
-                $entrySubPath = empty($subPath) ? $entry : $subPath . '/' . $entry;
+                if ($entry === '.' || $entry === '..') {
+                    continue;
+                }
+                $entryFullPath = realpath($targetFolder.DIRECTORY_SEPARATOR.$entry);
+
+                if (! $entryFullPath || ! $this->paths->isWithin($realFullPath, $entryFullPath)) {
+                    continue;
+                }
+
+                $entrySubPath = empty($subPath) ? $entry : $subPath.'/'.$entry;
                 $modifiedTime = filemtime($entryFullPath) ?: time();
 
                 if (is_dir($entryFullPath)) {
-                    $itemCount = count(glob($entryFullPath . '/*') ?: []);
+                    $itemCount = count(glob($entryFullPath.'/*') ?: []);
                     $folders[] = [
                         'name' => $entry,
                         'subpath' => $entrySubPath,
                         'is_dir' => true,
-                        'human_size' => $itemCount . ' ' . ($itemCount === 1 ? 'item' : 'items'),
+                        'human_size' => $itemCount.' '.($itemCount === 1 ? 'item' : 'items'),
                         'category' => 'folder',
                         'modified_at' => date('M j, Y', $modifiedTime),
                     ];
                 } else {
                     $fileSize = filesize($entryFullPath) ?: 0;
                     $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
-                    $knownMime = \App\Http\Controllers\DriveController::getKnownMimeType($ext);
-                    $mime = $knownMime;
-                    if (!$mime && function_exists('mime_content_type')) {
-                        $mime = mime_content_type($entryFullPath) ?: 'application/octet-stream';
-                    }
-                    if (!$mime) {
-                        $mime = 'application/octet-stream';
-                    }
+                    $mime = $this->metadata->mimeType($entryFullPath, $entry);
                     $category = $this->resolveCategory($ext, $mime);
 
                     $files[] = [
@@ -99,14 +88,16 @@ class ShareController extends Controller
 
             // Breadcrumbs inside shared folder
             $breadcrumbs = [
-                ['name' => $link->filename ?: basename($realFullPath), 'path' => '']
+                ['name' => $link->filename ?: basename($realFullPath), 'path' => ''],
             ];
-            if (!empty($subPath)) {
+            if (! empty($subPath)) {
                 $parts = explode('/', $subPath);
                 $accumulated = '';
                 foreach ($parts as $part) {
-                    if (empty($part)) continue;
-                    $accumulated = empty($accumulated) ? $part : $accumulated . '/' . $part;
+                    if (empty($part)) {
+                        continue;
+                    }
+                    $accumulated = empty($accumulated) ? $part : $accumulated.'/'.$part;
                     $breadcrumbs[] = [
                         'name' => $part,
                         'path' => $accumulated,
@@ -135,18 +126,11 @@ class ShareController extends Controller
         }
 
         // Single file view
-        $fileName = basename($cleanPath);
+        $fileName = basename($realFullPath);
         $fileSize = filesize($realFullPath) ?: 0;
         $modifiedTime = filemtime($realFullPath) ?: time();
-        $extension = strtolower(pathinfo($cleanPath, PATHINFO_EXTENSION));
-        $knownMime = \App\Http\Controllers\DriveController::getKnownMimeType($extension);
-        $mimeType = $knownMime;
-        if (!$mimeType && function_exists('mime_content_type')) {
-            $mimeType = mime_content_type($realFullPath) ?: 'application/octet-stream';
-        }
-        if (!$mimeType) {
-            $mimeType = 'application/octet-stream';
-        }
+        $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+        $mimeType = $this->metadata->mimeType($realFullPath, $fileName);
 
         $category = $this->resolveCategory($extension, $mimeType);
 
@@ -178,35 +162,23 @@ class ShareController extends Controller
     public function download(Request $request, string $token): BinaryFileResponse
     {
         $link = SharedLink::where('token', $token)->firstOrFail();
-        $disk = Storage::disk($this->disk);
-        $cleanPath = ltrim(str_replace('\\', '/', $link->file_path), '/');
-        $fullPath = $disk->path($cleanPath);
-
-        $rootPath = realpath($disk->path(''));
-        $realFullPath = realpath($fullPath);
-
-        if (!$realFullPath || !str_starts_with(str_replace('\\', '/', $realFullPath), str_replace('\\', '/', $rootPath)) || !file_exists($realFullPath)) {
-            abort(404, 'The requested item does not exist.');
-        }
+        $realFullPath = $this->resolveSharedItem($link);
 
         $targetPath = $realFullPath;
         if ($link->is_folder || is_dir($realFullPath)) {
-            $subPath = trim((string) $request->query('path', ''), '/\\');
-            $subPath = str_replace(["\0", '..'], '', $subPath);
-            if (empty($subPath)) {
+            $rawSubPath = (string) $request->query('path', '');
+            if ($rawSubPath === '') {
                 // If user clicks download on a folder directly, redirect to zip
                 return $this->downloadZip($request, $token);
             }
-            $targetPath = realpath($realFullPath . '/' . $subPath);
-            if (!$targetPath || !str_starts_with(str_replace('\\', '/', $targetPath), str_replace('\\', '/', $realFullPath)) || is_dir($targetPath)) {
-                abort(404, 'The requested file does not exist.');
-            }
+            [$targetPath] = $this->resolveWithinSharedRoot($realFullPath, $rawSubPath, false);
         }
 
         // Increment download counter
         $link->incrementDownloads();
 
         $fileName = basename($targetPath);
+
         return response()->download($targetPath, $fileName);
     }
 
@@ -216,59 +188,25 @@ class ShareController extends Controller
     public function downloadZip(Request $request, string $token): BinaryFileResponse
     {
         $link = SharedLink::where('token', $token)->firstOrFail();
-        $disk = Storage::disk($this->disk);
-        $cleanPath = ltrim(str_replace('\\', '/', $link->file_path), '/');
-        $fullPath = $disk->path($cleanPath);
+        $sharedRoot = $this->resolveSharedItem($link);
+        [$folder, $subPath] = $this->resolveWithinSharedRoot(
+            $sharedRoot,
+            (string) $request->query('path', ''),
+            true
+        );
 
-        $rootPath = realpath($disk->path(''));
-        $realFullPath = realpath($fullPath);
+        $folderName = $subPath === '' ? ($link->filename ?: basename($sharedRoot)) : basename($folder);
 
-        if (!$realFullPath || !str_starts_with(str_replace('\\', '/', $realFullPath), str_replace('\\', '/', $rootPath)) || !file_exists($realFullPath)) {
-            abort(404, 'The requested item does not exist.');
-        }
-
-        $targetFolder = $realFullPath;
-        $subPath = trim((string) $request->query('path', ''), '/\\');
-        $subPath = str_replace(["\0", '..'], '', $subPath);
-
-        if (!empty($subPath)) {
-            $targetFolder = realpath($realFullPath . '/' . $subPath);
-            if (!$targetFolder || !str_starts_with(str_replace('\\', '/', $targetFolder), str_replace('\\', '/', $realFullPath)) || !is_dir($targetFolder)) {
-                abort(404, 'Folder not found.');
-            }
-        }
-
-        $folderName = empty($subPath) ? ($link->filename ?: basename($realFullPath)) : basename($targetFolder);
-        $zipFileName = $folderName . '.zip';
-        $tempZipPath = tempnam(sys_get_temp_dir(), 'jhn_zip_') . '.zip';
-
-        $zip = new ZipArchive();
-        if ($zip->open($tempZipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        try {
+            $zipPath = $this->archives->createFromDirectory($folder);
+        } catch (Throwable $exception) {
+            report($exception);
             abort(500, 'Could not create ZIP archive.');
         }
 
-        $files = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($targetFolder, RecursiveDirectoryIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::LEAVES_ONLY
-        );
-
-        $normalizedTarget = rtrim(str_replace('\\', '/', $targetFolder), '/');
-
-        foreach ($files as $file) {
-            if (!$file->isDir()) {
-                $filePath = $file->getRealPath();
-                $normalizedFile = str_replace('\\', '/', $filePath);
-                $relativePath = ltrim(substr($normalizedFile, strlen($normalizedTarget)), '/');
-                $zip->addFile($filePath, $relativePath);
-            }
-        }
-
-        $zip->close();
-
-        // Increment download counter
         $link->incrementDownloads();
 
-        return response()->download($tempZipPath, $zipFileName)->deleteFileAfterSend(true);
+        return response()->download($zipPath, $folderName.'.zip')->deleteFileAfterSend(true);
     }
 
     /**
@@ -277,81 +215,19 @@ class ShareController extends Controller
     public function preview(Request $request, string $token)
     {
         $link = SharedLink::where('token', $token)->firstOrFail();
-        $disk = Storage::disk($this->disk);
-        $cleanPath = ltrim(str_replace('\\', '/', $link->file_path), '/');
-        $fullPath = $disk->path($cleanPath);
+        $sharedRoot = $this->resolveSharedItem($link);
+        $target = $sharedRoot;
 
-        $rootPath = realpath($disk->path(''));
-        $realFullPath = realpath($fullPath);
-
-        if (!$realFullPath || !str_starts_with(str_replace('\\', '/', $realFullPath), str_replace('\\', '/', $rootPath)) || !file_exists($realFullPath)) {
-            abort(404, 'File not found.');
-        }
-
-        $targetPath = $realFullPath;
-        if ($link->is_folder || is_dir($realFullPath)) {
-            $subPath = trim((string) $request->query('path', ''), '/\\');
-            $subPath = str_replace(["\0", '..'], '', $subPath);
-            if (empty($subPath)) {
+        if ($link->is_folder || is_dir($sharedRoot)) {
+            $subPath = (string) $request->query('path', '');
+            if ($subPath === '') {
                 abort(400, 'Directories cannot be previewed.');
             }
-            $targetPath = realpath($realFullPath . '/' . $subPath);
-            if (!$targetPath || !str_starts_with(str_replace('\\', '/', $targetPath), str_replace('\\', '/', $realFullPath)) || is_dir($targetPath)) {
-                abort(404, 'File not found.');
-            }
+
+            [$target] = $this->resolveWithinSharedRoot($sharedRoot, $subPath, false);
         }
 
-        $extension = strtolower(pathinfo($targetPath, PATHINFO_EXTENSION));
-        $knownMime = \App\Http\Controllers\DriveController::getKnownMimeType($extension);
-        $mime = $knownMime ?: (function_exists('mime_content_type') ? (mime_content_type($targetPath) ?: 'application/octet-stream') : 'application/octet-stream');
-
-        $size = filesize($targetPath);
-        $file = fopen($targetPath, 'rb');
-
-        $headers = [
-            'Content-Type' => $mime,
-            'Accept-Ranges' => 'bytes',
-            'Content-Disposition' => 'inline; filename="' . basename($targetPath) . '"',
-        ];
-
-        if ($request->header('Range')) {
-            $range = $request->header('Range');
-            if (preg_match('/bytes=(\d+)-(\d*)/', $range, $matches)) {
-                $start = (int) $matches[1];
-                $end = !empty($matches[2]) ? (int) $matches[2] : ($size - 1);
-
-                if ($start >= $size || $end >= $size || $start > $end) {
-                    return response('', 416, [
-                        'Content-Range' => "bytes */{$size}",
-                    ]);
-                }
-
-                $length = $end - $start + 1;
-                fseek($file, $start);
-
-                $headers['Content-Range'] = "bytes {$start}-{$end}/{$size}";
-                $headers['Content-Length'] = (string) $length;
-
-                return response()->stream(function () use ($file, $length) {
-                    $bufferSize = 1024 * 64;
-                    $bytesSent = 0;
-                    while (!feof($file) && $bytesSent < $length) {
-                        $readLength = min($bufferSize, $length - $bytesSent);
-                        $data = fread($file, $readLength);
-                        echo $data;
-                        flush();
-                        $bytesSent += strlen($data);
-                    }
-                    fclose($file);
-                }, 206, $headers);
-            }
-        }
-
-        $headers['Content-Length'] = (string) $size;
-        return response()->stream(function () use ($file) {
-            fpassthru($file);
-            fclose($file);
-        }, 200, $headers);
+        return $this->responses->preview($request, $target);
     }
 
     /**
@@ -359,13 +235,26 @@ class ShareController extends Controller
      */
     protected function formatBytes(int $bytes, int $precision = 1): string
     {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
+        return $this->metadata->formatBytes($bytes, $precision);
+    }
 
-        return round($bytes, $precision) . ' ' . $units[$pow];
+    /**
+     * Resolve a database share path and prove it remains inside the drive root.
+     */
+    private function resolveSharedItem(SharedLink $link): string
+    {
+        return $this->paths->resolveSharedItem($link);
+    }
+
+    /**
+     * Resolve a public subpath without accepting traversal, absolute paths,
+     * prefix-confused siblings, or symlinks that leave the shared root.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function resolveWithinSharedRoot(string $root, string $rawSubPath, bool $mustBeDirectory): array
+    {
+        return $this->paths->resolveWithinRoot($root, $rawSubPath, $mustBeDirectory);
     }
 
     /**
@@ -373,20 +262,6 @@ class ShareController extends Controller
      */
     protected function resolveCategory(string $ext, string $mime): string
     {
-        $ext = strtolower($ext);
-        $imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'tiff'];
-        $videoExts = ['mp4', 'webm', 'ogg', 'ogv', 'mov', 'qt', 'avi', 'mkv', 'm4v', 'flv', 'wmv', '3gp', 'ts'];
-        $audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma', 'opus'];
-
-        if (str_starts_with($mime, 'image/') || in_array($ext, $imageExts)) return 'image';
-        if (str_starts_with($mime, 'video/') || in_array($ext, $videoExts)) return 'video';
-        if (str_starts_with($mime, 'audio/') || in_array($ext, $audioExts)) return 'audio';
-        if ($ext === 'pdf' || $mime === 'application/pdf') return 'pdf';
-
-        if (in_array($ext, ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'iso'])) return 'archive';
-        if (in_array($ext, ['doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'xls', 'xlsx', 'csv', 'ppt', 'pptx'])) return 'document';
-        if (in_array($ext, ['js', 'ts', 'jsx', 'tsx', 'php', 'py', 'html', 'css', 'json', 'yaml', 'yml', 'xml', 'sql', 'sh', 'bat', 'c', 'cpp', 'rs', 'go'])) return 'code';
-
-        return 'other';
+        return $this->metadata->category($ext, $mime);
     }
 }

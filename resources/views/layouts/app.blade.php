@@ -28,39 +28,8 @@
             vertical-align: middle;
         }
     </style>
-
-    <!-- Tailwind CSS Standalone CDN with Dark Theme Configuration (Guarantees styling under all proxy/DNS conditions) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        dark: {
-                            bg: '#0d1117',
-                            surface: '#161b22',
-                            elevated: '#21262d',
-                            border: '#30363d',
-                            text: '#f0f6fc',
-                            muted: '#8b949e',
-                        },
-                        sky: {
-                            accent: '#38bdf8'
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-
-    <!-- Alpine.js CDN (Guarantees reactivity under all environments) -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
-
-    <!-- Local Compiled Vite Assets -->
-    @if (file_exists(public_path('build/manifest.json')))
-        @vite(['resources/css/app.css', 'resources/js/app.js'])
-    @endif
+    <!-- Tailwind and Alpine are compiled once through Vite. -->
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="min-h-screen bg-[#0d1117] text-[#f0f6fc] antialiased selection:bg-sky-500/20 selection:text-sky-400 overflow-x-hidden"
       style="background-color: #0d1117; color: #f0f6fc;">

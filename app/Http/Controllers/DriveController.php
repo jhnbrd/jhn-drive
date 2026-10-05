@@ -4,11 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\SharedLink;
 use App\Models\User;
+use App\Services\DrivePathService;
+use App\Services\FileMetadataService;
+use App\Services\FileResponseService;
+use App\Support\UploadLimits;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -20,23 +23,18 @@ class DriveController extends Controller
      */
     protected string $disk = 'local_drive';
 
+    public function __construct(
+        private readonly DrivePathService $paths,
+        private readonly FileMetadataService $metadata,
+        private readonly FileResponseService $responses,
+    ) {}
+
     /**
      * Get the realpath of the authenticated user's isolated root storage directory.
      */
     protected function getUserRootPath(User $user): string
     {
-        $user->ensureStorageDirectoryExists();
-        $disk = Storage::disk($this->disk);
-        $userRel = $user->storageRelativePath(); // e.g. 'users/1'
-        $resolved = realpath($disk->path($userRel));
-
-        if (!$resolved) {
-            $raw = $disk->path($userRel);
-            @mkdir($raw, 0755, true);
-            $resolved = realpath($raw);
-        }
-
-        return $resolved;
+        return $this->paths->userRoot($user);
     }
 
     /**
@@ -45,61 +43,13 @@ class DriveController extends Controller
      */
     protected function getSafePath(string $path = '', bool $mustExist = false, ?User $user = null): string
     {
-        $user = $user ?: Auth::user();
-        if (!$user) {
+        $user ??= Auth::user();
+
+        if (! $user) {
             abort(401, 'Unauthenticated.');
         }
 
-        $userRoot = $this->getUserRootPath($user);
-        $disk = Storage::disk($this->disk);
-
-        // Sanitize path: strip null bytes, normalize slashes
-        $path = str_replace(["\0", '\\'], ['', '/'], $path);
-        $cleanPath = ltrim($path, '/');
-
-        // If path already starts with users/{id}, strip it to avoid duplication
-        $userPrefix = $user->storageRelativePath() . '/';
-        if (str_starts_with($cleanPath, $userPrefix)) {
-            $cleanPath = substr($cleanPath, strlen($userPrefix));
-        } elseif ($cleanPath === $user->storageRelativePath()) {
-            $cleanPath = '';
-        }
-
-        // Relative path inside disk
-        $diskRelative = empty($cleanPath) ? $user->storageRelativePath() : $user->storageRelativePath() . '/' . $cleanPath;
-        $fullPath = $disk->path($diskRelative);
-
-        $normalizedRoot = str_replace('\\', '/', $userRoot);
-        $resolvedTarget = realpath($fullPath);
-
-        // Disallow path traversal escaping the user's isolated root
-        if ($resolvedTarget !== false) {
-            $normalizedResolved = str_replace('\\', '/', $resolvedTarget);
-            if ($normalizedResolved !== $normalizedRoot && !str_starts_with($normalizedResolved, $normalizedRoot . '/')) {
-                abort(403, 'Access denied: Path traversal detected.');
-            }
-        } else {
-            // Target does not exist on disk
-            $parentDir = dirname($fullPath);
-            $resolvedParent = realpath($parentDir);
-
-            // If parent cannot be resolved or escapes root: 403 Forbidden
-            if ($resolvedParent === false) {
-                abort(403, 'Access denied: Path traversal detected.');
-            }
-
-            $normalizedParent = str_replace('\\', '/', $resolvedParent);
-            if ($normalizedParent !== $normalizedRoot && !str_starts_with($normalizedParent, $normalizedRoot . '/')) {
-                abort(403, 'Access denied: Path traversal detected.');
-            }
-
-            // Path is within user bounds, but file does not exist
-            if ($mustExist) {
-                abort(404, 'The requested file or folder was not found.');
-            }
-        }
-
-        return $diskRelative;
+        return $this->paths->resolveUserPath($user, $path, $mustExist);
     }
 
     /**
@@ -107,15 +57,7 @@ class DriveController extends Controller
      */
     protected function toUserPath(string $diskPath, User $user): string
     {
-        $normalized = str_replace('\\', '/', $diskPath);
-        $prefix = $user->storageRelativePath() . '/';
-        if (str_starts_with($normalized, $prefix)) {
-            return substr($normalized, strlen($prefix));
-        }
-        if ($normalized === $user->storageRelativePath()) {
-            return '';
-        }
-        return $normalized;
+        return $this->paths->toUserPath($user, $diskPath);
     }
 
     /**
@@ -124,6 +66,7 @@ class DriveController extends Controller
     public function index()
     {
         $user = Auth::user();
+
         return view('drive.index', compact('user'));
     }
 
@@ -140,7 +83,7 @@ class DriveController extends Controller
             $disk = Storage::disk($this->disk);
             $fullPath = $disk->path($diskPath);
 
-            if (!is_dir($fullPath)) {
+            if (! is_dir($fullPath)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Directory not found.',
@@ -165,7 +108,7 @@ class DriveController extends Controller
                 $userRelPath = $this->toUserPath($dirPath, $user);
                 $normalizedRelative = str_replace('\\', '/', $dirPath);
 
-                $dirItemsCount = count(glob($dirFullPath . '/*') ?: []);
+                $dirItemsCount = count(glob($dirFullPath.'/*') ?: []);
                 $shareToken = $userLinks[$normalizedRelative] ?? null;
 
                 $items[] = [
@@ -174,13 +117,13 @@ class DriveController extends Controller
                     'is_dir' => true,
                     'extension' => '',
                     'size' => 0,
-                    'human_size' => $dirItemsCount . ' ' . ($dirItemsCount === 1 ? 'item' : 'items'),
+                    'human_size' => $dirItemsCount.' '.($dirItemsCount === 1 ? 'item' : 'items'),
                     'mime_type' => 'directory',
                     'category' => 'folder',
                     'modified_at' => date('Y-m-d H:i:s', $modifiedTime),
                     'modified_human' => $this->formatTimeAgo($modifiedTime),
                     'share_token' => $shareToken,
-                    'share_url' => $shareToken ? url('/s/' . $shareToken) : null,
+                    'share_url' => $shareToken ? url('/s/'.$shareToken) : null,
                 ];
             }
 
@@ -194,12 +137,12 @@ class DriveController extends Controller
                 $normalizedRelative = str_replace('\\', '/', $filePath);
                 $userRelPath = $this->toUserPath($filePath, $user);
 
-                $knownMime = $this->getKnownMimeType($extension);
+                $knownMime = $this->metadata->knownMimeType($extension);
                 $mimeType = $knownMime;
-                if (!$mimeType && function_exists('mime_content_type') && file_exists($fileFullPath)) {
+                if (! $mimeType && function_exists('mime_content_type') && file_exists($fileFullPath)) {
                     $mimeType = mime_content_type($fileFullPath) ?: 'application/octet-stream';
                 }
-                if (!$mimeType) {
+                if (! $mimeType) {
                     $mimeType = 'application/octet-stream';
                 }
 
@@ -218,7 +161,7 @@ class DriveController extends Controller
                     'modified_at' => date('Y-m-d H:i:s', $modifiedTime),
                     'modified_human' => $this->formatTimeAgo($modifiedTime),
                     'share_token' => $shareToken,
-                    'share_url' => $shareToken ? url('/s/' . $shareToken) : null,
+                    'share_url' => $shareToken ? url('/s/'.$shareToken) : null,
                     'download_url' => route('drive.download', ['path' => $userRelPath]),
                     'preview_url' => in_array($category, ['image', 'video']) ? route('drive.preview', ['path' => $userRelPath]) : null,
                 ];
@@ -227,7 +170,7 @@ class DriveController extends Controller
             $userCurrentPath = $this->toUserPath($diskPath, $user);
             $breadcrumbs = $this->buildBreadcrumbs($userCurrentPath);
             $parentPath = '';
-            if (!empty($userCurrentPath)) {
+            if (! empty($userCurrentPath)) {
                 $parts = explode('/', $userCurrentPath);
                 array_pop($parts);
                 $parentPath = implode('/', $parts);
@@ -243,9 +186,11 @@ class DriveController extends Controller
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Unable to load this folder right now.',
             ], 400);
         }
     }
@@ -263,7 +208,7 @@ class DriveController extends Controller
             $disk = Storage::disk($this->disk);
             $destinationFolder = $disk->path($cleanDiskDir);
 
-            if (!is_dir($destinationFolder)) {
+            if (! is_dir($destinationFolder)) {
                 @mkdir($destinationFolder, 0755, true);
             }
 
@@ -290,11 +235,40 @@ class DriveController extends Controller
                 }
             }
 
+            $uploadLimits = UploadLimits::clientConfig();
+
+            if (count($fileList) > $uploadLimits['max_files_per_request']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Too many files. The server accepts at most {$uploadLimits['max_files_per_request']} files per request.",
+                    'upload_limits' => $uploadLimits,
+                ], 422);
+            }
+
+            foreach ($fileList as $file) {
+                if ($file->getSize() > $uploadLimits['max_file_bytes']) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "{$file->getClientOriginalName()} exceeds the server limit of {$uploadLimits['max_file_human']} per file.",
+                        'upload_limits' => $uploadLimits,
+                    ], 422);
+                }
+            }
+
+            if ($totalIncomingBytes > $uploadLimits['max_request_bytes']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "The selected files exceed the server request limit of {$uploadLimits['max_request_human']}.",
+                    'upload_limits' => $uploadLimits,
+                ], 422);
+            }
+
             // 20GB Quota Enforcement
-            if (!$user->hasStorageFor($totalIncomingBytes)) {
+            if (! $user->hasStorageFor($totalIncomingBytes)) {
                 $used = $user->humanUsedStorage();
                 $quota = $user->humanStorageQuota();
                 $incoming = $this->formatBytes($totalIncomingBytes);
+
                 return response()->json([
                     'success' => false,
                     'message' => "Upload rejected: Storage quota exceeded. This upload ({$incoming}) would exceed your 20 GB limit. Current usage: {$used} / {$quota}.",
@@ -303,7 +277,7 @@ class DriveController extends Controller
 
             $uploadedFiles = [];
             foreach ($fileList as $file) {
-                if (!$file->isValid()) {
+                if (! $file->isValid()) {
                     continue;
                 }
 
@@ -313,7 +287,7 @@ class DriveController extends Controller
                 // Check for duplicate filename and auto-rename
                 $finalName = $this->getUniqueFilename($cleanDiskDir, $sanitizedName);
 
-                $targetPath = $cleanDiskDir . '/' . $finalName;
+                $targetPath = $cleanDiskDir.'/'.$finalName;
                 $file->storeAs($cleanDiskDir, $finalName, $this->disk);
 
                 $userPath = $this->toUserPath($targetPath, $user);
@@ -328,15 +302,17 @@ class DriveController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => count($uploadedFiles) . ' file(s) uploaded successfully.',
+                'message' => count($uploadedFiles).' file(s) uploaded successfully.',
                 'files' => $uploadedFiles,
             ]);
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Upload failed: ' . $e->getMessage(),
+                'message' => 'Upload failed. Please try again.',
             ], 500);
         }
     }
@@ -357,7 +333,7 @@ class DriveController extends Controller
             $cleanParentDisk = $this->getSafePath($parentPath, false, $user);
             $folderName = trim((string) $request->input('name'));
 
-            $targetRelative = $cleanParentDisk . '/' . $folderName;
+            $targetRelative = $cleanParentDisk.'/'.$folderName;
             $this->getSafePath($this->toUserPath($targetRelative, $user), false, $user);
 
             $disk = Storage::disk($this->disk);
@@ -378,9 +354,11 @@ class DriveController extends Controller
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Unable to create the folder.',
             ], 400);
         }
     }
@@ -391,26 +369,26 @@ class DriveController extends Controller
     public function rename(Request $request): JsonResponse
     {
         $request->validate([
-            'path'     => ['required', 'string'],
+            'path' => ['required', 'string'],
             'new_name' => ['required', 'string', 'max:255', 'regex:/^[^\\\\\\/\:\*\?\"<>|]+$/'],
         ]);
 
         try {
             $user = Auth::user();
-            $rawPath  = (string) $request->input('path');
-            $newName  = trim((string) $request->input('new_name'));
+            $rawPath = (string) $request->input('path');
+            $newName = trim((string) $request->input('new_name'));
 
             if (empty(trim($rawPath, '/\\'))) {
                 return response()->json(['success' => false, 'message' => 'Cannot rename the root folder.'], 403);
             }
 
             $oldDiskPath = $this->getSafePath($rawPath, true, $user);
-            $disk        = Storage::disk($this->disk);
+            $disk = Storage::disk($this->disk);
             $fullOldPath = $disk->path($oldDiskPath);
 
             // Determine new disk path (same parent directory)
             $parentDiskPath = dirname($oldDiskPath);
-            $newDiskPath    = ($parentDiskPath === '.' ? '' : $parentDiskPath . '/') . $newName;
+            $newDiskPath = ($parentDiskPath === '.' ? '' : $parentDiskPath.'/').$newName;
 
             // Validate new path stays within user root
             $userRelNewPath = $this->toUserPath($newDiskPath, $user);
@@ -424,13 +402,13 @@ class DriveController extends Controller
             if (is_dir($fullOldPath)) {
                 // Rename directory via PHP rename for cross-OS compatibility
                 $fullNewPath = $disk->path($newDiskPath);
-                if (!rename($fullOldPath, $fullNewPath)) {
+                if (! rename($fullOldPath, $fullNewPath)) {
                     return response()->json(['success' => false, 'message' => 'Failed to rename folder.'], 500);
                 }
                 // Update shared links for folder and its children
                 SharedLink::where('file_path', $oldDiskPath)->update(['file_path' => $newDiskPath]);
-                SharedLink::where('file_path', 'LIKE', $oldDiskPath . '/%')->get()->each(function ($link) use ($oldDiskPath, $newDiskPath) {
-                    $link->update(['file_path' => $newDiskPath . substr($link->file_path, strlen($oldDiskPath))]);
+                SharedLink::where('file_path', 'LIKE', $oldDiskPath.'/%')->get()->each(function ($link) use ($oldDiskPath, $newDiskPath) {
+                    $link->update(['file_path' => $newDiskPath.substr($link->file_path, strlen($oldDiskPath))]);
                 });
             } else {
                 // Rename file
@@ -439,15 +417,20 @@ class DriveController extends Controller
             }
 
             return response()->json([
-                'success'  => true,
-                'message'  => "Renamed to '{$newName}' successfully.",
+                'success' => true,
+                'message' => "Renamed to '{$newName}' successfully.",
                 'new_path' => $this->toUserPath($newDiskPath, $user),
                 'new_name' => $newName,
             ]);
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Rename failed: ' . $e->getMessage()], 500);
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to rename this item.',
+            ], 500);
         }
     }
 
@@ -478,7 +461,7 @@ class DriveController extends Controller
 
             if (is_dir($fullPath)) {
                 $disk->deleteDirectory($cleanDiskPath);
-                SharedLink::where('file_path', 'LIKE', $cleanDiskPath . '/%')
+                SharedLink::where('file_path', 'LIKE', $cleanDiskPath.'/%')
                     ->orWhere('file_path', $cleanDiskPath)
                     ->delete();
             } else {
@@ -493,9 +476,11 @@ class DriveController extends Controller
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Delete failed: ' . $e->getMessage(),
+                'message' => 'Unable to delete this item.',
             ], 500);
         }
     }
@@ -521,13 +506,16 @@ class DriveController extends Controller
             }
 
             $fileName = basename($cleanDiskPath);
+
             return response()->download($fullPath, $fileName);
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Download error: ' . $e->getMessage(),
+                'message' => 'The file could not be downloaded.',
             ], 404);
         }
     }
@@ -563,9 +551,11 @@ class DriveController extends Controller
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Unable to create a share link.',
             ], 400);
         }
     }
@@ -585,7 +575,7 @@ class DriveController extends Controller
             $path = $request->input('path');
             $token = $request->input('token');
 
-            if (!$path && !$token) {
+            if (! $path && ! $token) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Path or token is required to unshare.',
@@ -609,9 +599,11 @@ class DriveController extends Controller
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Unable to revoke the share link.',
             ], 400);
         }
     }
@@ -639,11 +631,11 @@ class DriveController extends Controller
 
                 $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
                 $mimeType = $isDir ? 'directory' : 'application/octet-stream';
-                if (!$isDir && function_exists('mime_content_type') && $exists) {
+                if (! $isDir && function_exists('mime_content_type') && $exists) {
                     $mimeType = mime_content_type($fullPath) ?: 'application/octet-stream';
                 }
                 $category = $isDir ? 'folder' : $this->resolveCategory($extension, $mimeType);
-                $size = (!$isDir && $exists) ? (filesize($fullPath) ?: 0) : 0;
+                $size = (! $isDir && $exists) ? (filesize($fullPath) ?: 0) : 0;
 
                 $items[] = [
                     'id' => $link->id,
@@ -659,7 +651,7 @@ class DriveController extends Controller
                     'downloads_count' => $link->downloads_count,
                     'created_at' => $link->created_at?->format('Y-m-d H:i:s'),
                     'created_human' => $link->created_at ? $this->formatTimeAgo($link->created_at->timestamp) : 'recently',
-                    'preview_url' => (!$isDir && in_array($category, ['image', 'video'])) ? route('drive.preview', ['path' => $userRelPath]) : null,
+                    'preview_url' => (! $isDir && in_array($category, ['image', 'video'])) ? route('drive.preview', ['path' => $userRelPath]) : null,
                 ];
             }
 
@@ -670,9 +662,11 @@ class DriveController extends Controller
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Unable to load shared items.',
             ], 500);
         }
     }
@@ -684,71 +678,19 @@ class DriveController extends Controller
     {
         try {
             $user = Auth::user();
-            $rawPath = (string) $request->query('path', '');
-            $cleanDiskPath = $this->getSafePath($rawPath, true, $user);
-
-            $disk = Storage::disk($this->disk);
-            $fullPath = $disk->path($cleanDiskPath);
+            $diskPath = $this->getSafePath((string) $request->query('path', ''), true, $user);
+            $fullPath = Storage::disk($this->disk)->path($diskPath);
 
             if (is_dir($fullPath)) {
                 abort(400, 'Directories cannot be previewed.');
             }
 
-            $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
-            $knownMime = $this->getKnownMimeType($extension);
-            $mime = $knownMime ?: (function_exists('mime_content_type') ? (mime_content_type($fullPath) ?: 'application/octet-stream') : 'application/octet-stream');
-
-            $size = filesize($fullPath);
-            $file = fopen($fullPath, 'rb');
-
-            $headers = [
-                'Content-Type' => $mime,
-                'Accept-Ranges' => 'bytes',
-                'Content-Disposition' => 'inline; filename="' . basename($fullPath) . '"',
-            ];
-
-            if ($request->header('Range')) {
-                $range = $request->header('Range');
-                if (preg_match('/bytes=(\d+)-(\d*)/', $range, $matches)) {
-                    $start = (int) $matches[1];
-                    $end = !empty($matches[2]) ? (int) $matches[2] : ($size - 1);
-
-                    if ($start >= $size || $end >= $size || $start > $end) {
-                        return response('', 416, [
-                            'Content-Range' => "bytes */{$size}",
-                        ]);
-                    }
-
-                    $length = $end - $start + 1;
-                    fseek($file, $start);
-
-                    $headers['Content-Range'] = "bytes {$start}-{$end}/{$size}";
-                    $headers['Content-Length'] = (string) $length;
-
-                    return response()->stream(function () use ($file, $length) {
-                        $bufferSize = 1024 * 64;
-                        $bytesSent = 0;
-                        while (!feof($file) && $bytesSent < $length) {
-                            $readLength = min($bufferSize, $length - $bytesSent);
-                            $data = fread($file, $readLength);
-                            echo $data;
-                            flush();
-                            $bytesSent += strlen($data);
-                        }
-                        fclose($file);
-                    }, 206, $headers);
-                }
-            }
-
-            $headers['Content-Length'] = (string) $size;
-            return response()->stream(function () use ($file) {
-                fpassthru($file);
-                fclose($file);
-            }, 200, $headers);
+            return $this->responses->preview($request, $fullPath);
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
-            abort(404, 'Preview unavailable: ' . $e->getMessage());
+            report($e);
+            abort(404, 'Preview unavailable.');
         }
     }
 
@@ -773,6 +715,7 @@ class DriveController extends Controller
                 'used_human' => $user->humanUsedStorage(),
                 'quota_human' => $user->humanStorageQuota(),
                 'free_human' => User::formatBytes($freeBytes),
+                'upload_limits' => UploadLimits::clientConfig(),
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,
@@ -783,9 +726,11 @@ class DriveController extends Controller
         } catch (HttpExceptionInterface $e) {
             throw $e;
         } catch (Exception $e) {
+            report($e);
+
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Unable to calculate storage information.',
             ], 500);
         }
     }
@@ -795,27 +740,7 @@ class DriveController extends Controller
      */
     protected function buildBreadcrumbs(string $cleanPath): array
     {
-        $crumbs = [
-            ['name' => 'My Drive', 'path' => '']
-        ];
-
-        if (empty($cleanPath)) {
-            return $crumbs;
-        }
-
-        $parts = explode('/', $cleanPath);
-        $accumulated = '';
-
-        foreach ($parts as $part) {
-            if (empty($part)) continue;
-            $accumulated = empty($accumulated) ? $part : $accumulated . '/' . $part;
-            $crumbs[] = [
-                'name' => $part,
-                'path' => $accumulated,
-            ];
-        }
-
-        return $crumbs;
+        return $this->metadata->breadcrumbs($cleanPath);
     }
 
     /**
@@ -823,17 +748,7 @@ class DriveController extends Controller
      */
     protected function sanitizeFilename(string $filename): string
     {
-        $name = pathinfo($filename, PATHINFO_FILENAME);
-        $ext = pathinfo($filename, PATHINFO_EXTENSION);
-
-        $cleanName = preg_replace('/[\\\\\\/\\:\\*\\?\\"\\<\\>\\|\\x00-\\x1F]/', '_', $name);
-        $cleanName = trim($cleanName, ' .');
-
-        if (empty($cleanName)) {
-            $cleanName = 'file_' . time();
-        }
-
-        return empty($ext) ? $cleanName : $cleanName . '.' . $ext;
+        return $this->metadata->sanitizeFilename($filename);
     }
 
     /**
@@ -841,24 +756,7 @@ class DriveController extends Controller
      */
     protected function getUniqueFilename(string $dir, string $filename): string
     {
-        $disk = Storage::disk($this->disk);
-        $baseName = pathinfo($filename, PATHINFO_FILENAME);
-        $ext = pathinfo($filename, PATHINFO_EXTENSION);
-        $dotExt = empty($ext) ? '' : '.' . $ext;
-
-        $target = empty($dir) ? $filename : $dir . '/' . $filename;
-        if (!$disk->exists($target)) {
-            return $filename;
-        }
-
-        $counter = 1;
-        do {
-            $candidateName = "{$baseName} ({$counter}){$dotExt}";
-            $target = empty($dir) ? $candidateName : $dir . '/' . $candidateName;
-            $counter++;
-        } while ($disk->exists($target));
-
-        return $candidateName;
+        return $this->metadata->uniqueFilename($dir, $filename, $this->disk);
     }
 
     /**
@@ -866,7 +764,7 @@ class DriveController extends Controller
      */
     protected function formatBytes(int $bytes, int $precision = 1): string
     {
-        return User::formatBytes($bytes, $precision);
+        return $this->metadata->formatBytes($bytes, $precision);
     }
 
     /**
@@ -874,84 +772,18 @@ class DriveController extends Controller
      */
     protected function formatTimeAgo(int $timestamp): string
     {
-        $diff = time() - $timestamp;
-        if ($diff < 60) return 'just now';
-        if ($diff < 3600) return floor($diff / 60) . 'm ago';
-        if ($diff < 86400) return floor($diff / 3600) . 'h ago';
-        if ($diff < 2592000) return floor($diff / 86400) . 'd ago';
-        return date('M j, Y', $timestamp);
+        return $this->metadata->formatTimeAgo($timestamp);
     }
 
     /**
      * Return canonical MIME type for media files based on extension.
      */
-    public static function getKnownMimeType(string $ext): ?string
-    {
-        $map = [
-            // Video
-            'mp4' => 'video/mp4',
-            'm4v' => 'video/mp4',
-            'webm' => 'video/webm',
-            'ogg' => 'video/ogg',
-            'ogv' => 'video/ogg',
-            'mov' => 'video/quicktime',
-            'qt' => 'video/quicktime',
-            'avi' => 'video/x-msvideo',
-            'mkv' => 'video/x-matroska',
-            'flv' => 'video/x-flv',
-            'wmv' => 'video/x-ms-wmv',
-            '3gp' => 'video/3gpp',
-            'ts' => 'video/mp2t',
-
-            // Images
-            'jpg' => 'image/jpeg',
-            'jpeg' => 'image/jpeg',
-            'png' => 'image/png',
-            'gif' => 'image/gif',
-            'webp' => 'image/webp',
-            'svg' => 'image/svg+xml',
-            'bmp' => 'image/bmp',
-            'ico' => 'image/x-icon',
-            'avif' => 'image/avif',
-
-            // Audio
-            'mp3' => 'audio/mpeg',
-            'wav' => 'audio/wav',
-            'm4a' => 'audio/mp4',
-            'flac' => 'audio/flac',
-            'aac' => 'audio/aac',
-            'wma' => 'audio/x-ms-wma',
-            'opus' => 'audio/opus',
-
-            // Documents
-            'pdf' => 'application/pdf',
-            'txt' => 'text/plain',
-            'json' => 'application/json',
-            'zip' => 'application/zip',
-        ];
-
-        return $map[strtolower($ext)] ?? null;
-    }
 
     /**
      * Determine category for icon presentation and preview capability.
      */
     protected function resolveCategory(string $ext, string $mime): string
     {
-        $ext = strtolower($ext);
-        $imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'tiff'];
-        $videoExts = ['mp4', 'webm', 'ogg', 'ogv', 'mov', 'qt', 'avi', 'mkv', 'm4v', 'flv', 'wmv', '3gp', 'ts'];
-        $audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma', 'opus'];
-
-        if (str_starts_with($mime, 'image/') || in_array($ext, $imageExts)) return 'image';
-        if (str_starts_with($mime, 'video/') || in_array($ext, $videoExts)) return 'video';
-        if (str_starts_with($mime, 'audio/') || in_array($ext, $audioExts)) return 'audio';
-        if ($ext === 'pdf' || $mime === 'application/pdf') return 'pdf';
-
-        if (in_array($ext, ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'iso'])) return 'archive';
-        if (in_array($ext, ['doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'xls', 'xlsx', 'csv', 'ppt', 'pptx'])) return 'document';
-        if (in_array($ext, ['js', 'ts', 'jsx', 'tsx', 'php', 'py', 'html', 'css', 'json', 'yaml', 'yml', 'xml', 'sql', 'sh', 'bat', 'c', 'cpp', 'rs', 'go'])) return 'code';
-
-        return 'other';
+        return $this->metadata->category($ext, $mime);
     }
 }

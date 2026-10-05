@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class SecretVaultOptimizationTest extends TestCase
@@ -81,10 +80,5 @@ class SecretVaultOptimizationTest extends TestCase
 
         $lockRes->assertStatus(200);
         $lockRes->assertSessionMissing('secret_vault_auth');
-
-        // Cleanup test files
-        $secretPath = storage_path('app/drive_storage/secret');
-        @unlink($secretPath . DIRECTORY_SEPARATOR . 'sample_clip.mp4.enc');
-        @unlink($secretPath . DIRECTORY_SEPARATOR . '.sample_clip.mp4.thumb.enc');
     }
 }

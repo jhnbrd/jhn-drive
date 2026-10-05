@@ -17,33 +17,27 @@ class DriveApiAndSecurityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        SharedLink::truncate();
-        User::whereIn('email', ['alice@example.com', 'bob@example.com', 'charlie@example.com'])->delete();
 
         // Create approved superadmin
-        $this->admin = User::firstOrCreate(
-            ['email' => 'admin@jhnbrd.com'],
-            [
-                'name' => 'Admin User',
-                'password' => Hash::make('password123'),
-                'is_superadmin' => true,
-                'status' => 'approved',
-                'approved_at' => now(),
-            ]
-        );
+        $this->admin = User::create([
+            'email' => 'admin@jhnbrd.com',
+            'name' => 'Admin User',
+            'password' => Hash::make('password123'),
+            'is_superadmin' => true,
+            'status' => 'approved',
+            'approved_at' => now(),
+        ]);
         $this->admin->ensureStorageDirectoryExists();
 
         // Create approved standard user
-        $this->user = User::firstOrCreate(
-            ['email' => 'user@jhnbrd.com'],
-            [
-                'name' => 'Regular User',
-                'password' => Hash::make('password123'),
-                'is_superadmin' => false,
-                'status' => 'approved',
-                'approved_at' => now(),
-            ]
-        );
+        $this->user = User::create([
+            'email' => 'user@jhnbrd.com',
+            'name' => 'Regular User',
+            'password' => Hash::make('password123'),
+            'is_superadmin' => false,
+            'status' => 'approved',
+            'approved_at' => now(),
+        ]);
         $this->user->ensureStorageDirectoryExists();
 
         // Put sample file in user's isolated directory
