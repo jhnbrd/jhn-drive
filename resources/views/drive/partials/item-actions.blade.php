@@ -60,6 +60,19 @@
         </button>
 
         <div class="my-1 border-t border-slate-800"></div>
+        <button type="button" class="jhn-nav-item" @click="openTransferDialog(item, 'move')">
+            <svg class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 9h10m0 0l-3-3m3 3l-3 3M19 15H9m0 0l3-3m-3 3l3 3"/>
+            </svg>
+            Move
+        </button>
+        <button type="button" class="jhn-nav-item" @click="openTransferDialog(item, 'copy')">
+            <svg class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="8" y="8" width="11" height="11" rx="2" stroke-width="2"/>
+                <path stroke-linecap="round" stroke-width="2" d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/>
+            </svg>
+            Copy
+        </button>
         <button type="button" class="jhn-nav-item" @click="renameItem(item); activeMenu = null">
             <svg class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 20h4L19 9a2.8 2.8 0 10-4-4L4 16v4z"/>
@@ -79,7 +92,7 @@
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 7h14m-9 4v6m4-6v6M9 7l1-3h4l1 3m-8 0l1 13h8l1-13"/>
             </svg>
-            Delete permanently
+            Move to Trash
         </button>
     </div>
 </div>

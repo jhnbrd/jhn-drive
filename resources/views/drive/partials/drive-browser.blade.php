@@ -13,6 +13,42 @@
                    x-text="selectionCount > 0 ? 'Shift-click a checkbox to select a range' : 'Select items for bulk actions'"></p>
             </div>
         </div>
+        <div x-show="selectionCount === 0" class="flex flex-wrap items-center justify-end gap-2">
+            <label>
+                <span class="sr-only">Filter My Drive by type</span>
+                <select x-model="driveFilter" @change="clearSelection()"
+                        class="h-9 rounded-lg border border-slate-700 bg-[#0b1017] px-2.5 text-xs text-slate-200 outline-none focus:border-cyan-400">
+                    <option value="all">All types</option>
+                    <option value="folder">Folders</option>
+                    <option value="image">Images</option>
+                    <option value="video">Videos</option>
+                    <option value="audio">Audio</option>
+                    <option value="document">Documents</option>
+                    <option value="archive">Archives</option>
+                </select>
+            </label>
+            <label>
+                <span class="sr-only">Sort My Drive</span>
+                <select x-model="driveSort"
+                        class="h-9 rounded-lg border border-slate-700 bg-[#0b1017] px-2.5 text-xs text-slate-200 outline-none focus:border-cyan-400">
+                    <option value="name">Name</option>
+                    <option value="modified">Modified</option>
+                    <option value="size">Size</option>
+                    <option value="type">Type</option>
+                </select>
+            </label>
+            <button type="button"
+                    @click="driveDirection = driveDirection === 'asc' ? 'desc' : 'asc'"
+                    class="h-9 rounded-lg border border-slate-700 px-3 text-xs font-medium text-slate-300 hover:border-cyan-400/50 hover:text-cyan-300"
+                    :aria-label="driveDirection === 'asc' ? 'Sort descending' : 'Sort ascending'"
+                    x-text="driveDirection === 'asc' ? 'Ascending' : 'Descending'"></button>
+            <button x-show="driveFilter !== 'all' || driveSort !== 'name' || driveDirection !== 'asc'"
+                    type="button"
+                    @click="resetDriveFilters()"
+                    class="h-9 rounded-lg px-2 text-xs font-medium text-slate-500 hover:text-white">
+                Reset
+            </button>
+        </div>
         <div x-show="selectionCount > 0" class="flex flex-wrap items-center justify-end gap-2">
             <button type="button"
                     class="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-medium text-slate-200 hover:border-cyan-400/50 hover:text-cyan-300 disabled:opacity-50"
@@ -22,6 +58,12 @@
                 </svg>
                 <span x-text="isBulkDownloading ? 'Packaging?' : 'Download'"></span>
             </button>
+            <button type="button"
+                    class="inline-flex min-h-9 items-center rounded-lg border border-slate-700 px-3 text-xs font-medium text-slate-200 hover:border-cyan-400/50 hover:text-cyan-300"
+                    @click="openTransferDialog(selectedItems, 'move')">Move</button>
+            <button type="button"
+                    class="inline-flex min-h-9 items-center rounded-lg border border-slate-700 px-3 text-xs font-medium text-slate-200 hover:border-cyan-400/50 hover:text-cyan-300"
+                    @click="openTransferDialog(selectedItems, 'copy')">Copy</button>
             <button x-show="selectionCount === 1" type="button"
                     class="inline-flex min-h-9 items-center rounded-lg border border-slate-700 px-3 text-xs font-medium text-slate-200 hover:border-emerald-500/50 hover:text-emerald-300"
                     @click="shareItem(selectedItems[0])">Share</button>
@@ -50,10 +92,11 @@
             </svg>
         </span>
         <h2 class="mt-4 text-base font-semibold text-white"
-            x-text="searchQuery ? 'No files match your search' : (currentPath ? 'This folder is empty' : 'Your Drive is empty')"></h2>
+            x-text="items.length > 0 ? 'No items match this filter' : (currentPath ? 'This folder is empty' : 'Your Drive is empty')"></h2>
         <p class="mt-2 text-xs leading-relaxed text-slate-500"
-           x-text="searchQuery ? 'Try a different name in this folder.' : 'Upload files or create a folder to get started.'"></p>
-        <div x-show="!searchQuery" class="mt-5 flex flex-wrap justify-center gap-2">
+           x-text="items.length > 0 ? 'Choose another file type or reset the filters.' : 'Upload files or create a folder to get started.'"></p>
+        <button x-show="items.length > 0" type="button" class="mt-5 rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-200 hover:border-cyan-400/50" @click="resetDriveFilters()">Reset filters</button>
+        <div x-show="items.length === 0" class="mt-5 flex flex-wrap justify-center gap-2">
             <button type="button" class="jhn-button-primary" @click="$refs.fileInput.click()">Upload files</button>
             <button type="button" class="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-200 hover:border-slate-500"
                     @click="openNewFolderDialog()">New folder</button>

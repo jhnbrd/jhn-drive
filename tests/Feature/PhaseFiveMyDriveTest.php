@@ -26,7 +26,7 @@ class PhaseFiveMyDriveTest extends TestCase
             ->assertSee('Shift-click a checkbox to select a range')
             ->assertSee('role="dialog"', false)
             ->assertSee('aria-labelledby="item-details-title"', false)
-            ->assertSee('Delete permanently');
+            ->assertSee('Move to Trash');
     }
 
     public function test_file_listing_exposes_details_and_share_download_count(): void

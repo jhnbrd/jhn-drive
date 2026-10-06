@@ -94,7 +94,7 @@ class User extends Authenticatable
      */
     public function storageRelativePath(): string
     {
-        return 'users/' . $this->id;
+        return 'users/'.$this->id;
     }
 
     /**
@@ -111,9 +111,10 @@ class User extends Authenticatable
     public function ensureStorageDirectoryExists(): string
     {
         $path = $this->storageFullPath();
-        if (!is_dir($path)) {
+        if (! is_dir($path)) {
             @mkdir($path, 0755, true);
         }
+
         return $path;
     }
 
@@ -123,7 +124,7 @@ class User extends Authenticatable
     public function usedStorageBytes(): int
     {
         $dir = $this->storageFullPath();
-        if (!is_dir($dir)) {
+        if (! is_dir($dir)) {
             return 0;
         }
 
@@ -157,6 +158,7 @@ class User extends Authenticatable
     public function storagePercentage(): float
     {
         $used = $this->usedStorageBytes();
+
         return round(($used / self::STORAGE_QUOTA_BYTES) * 100, 1);
     }
 
@@ -179,7 +181,7 @@ class User extends Authenticatable
         $pow = min($pow, count($units) - 1);
         $bytes /= pow(1024, $pow);
 
-        return round($bytes, $precision) . ' ' . $units[$pow];
+        return round($bytes, $precision).' '.$units[$pow];
     }
 
     /**
@@ -196,6 +198,14 @@ class User extends Authenticatable
     public function humanStorageQuota(): string
     {
         return self::formatBytes(self::STORAGE_QUOTA_BYTES);
+    }
+
+    /**
+     * Items currently held in this user's Trash.
+     */
+    public function trashedItems(): HasMany
+    {
+        return $this->hasMany(TrashedItem::class);
     }
 
     /**

@@ -136,7 +136,7 @@
     </div>
 
     <!-- ========================================================================= -->
-    <!-- DELETE CONFIRMATION MODAL -->
+    <!-- MOVE TO TRASH CONFIRMATION MODAL -->
     <!-- ========================================================================= -->
     <div x-show="showDeleteModal" 
          x-cloak
@@ -150,13 +150,13 @@
                     </svg>
                 </div>
                 <div>
-                    <h3 class="text-sm font-bold text-white">Delete Item</h3>
-                    <p class="text-xs text-rose-300">This action cannot be undone.</p>
+                    <h3 class="text-sm font-bold text-white">Move to Trash</h3>
+                    <p class="text-xs text-rose-300">You can restore this item later.</p>
                 </div>
             </div>
 
             <p class="mt-4 text-xs text-slate-200 leading-relaxed">
-                Are you sure you want to permanently delete <span class="font-bold text-white" x-text="targetDeleteItem ? targetDeleteItem.name : ''"></span>?
+                Move <span class="font-bold text-white" x-text="targetDeleteItem ? targetDeleteItem.name : ''"></span> to Trash? Any public share links will be revoked.
             </p>
 
             <div class="mt-6 flex justify-end gap-2.5">
@@ -168,7 +168,7 @@
                 <button type="button" 
                         @click="executeDelete()" 
                         class="rounded-xl bg-rose-600 px-5 py-2 text-xs font-bold text-white hover:bg-rose-500 transition-colors shadow-md shadow-rose-600/30">
-                    Delete Permanently
+                    Move to Trash
                 </button>
             </div>
         </div>

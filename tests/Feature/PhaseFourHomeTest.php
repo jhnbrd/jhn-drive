@@ -36,10 +36,11 @@ class PhaseFourHomeTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('storage.used_bytes', 240)
-            ->assertJsonPath('storage.file_count', 3)
+            ->assertJsonPath('storage.used_bytes', 740)
+            ->assertJsonPath('storage.file_count', 4)
             ->assertJsonPath('shared.0.name', 'report.pdf')
             ->assertJsonPath('shared.0.downloads_count', 3)
+            ->assertJsonFragment(['key' => 'archive', 'bytes' => 500, 'count' => 1])
             ->assertJsonFragment(['name' => 'sunrise.jpg'])
             ->assertJsonFragment(['name' => 'theme.mp3'])
             ->assertJsonFragment(['key' => 'image', 'bytes' => 120, 'count' => 1])

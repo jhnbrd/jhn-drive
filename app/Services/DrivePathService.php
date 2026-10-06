@@ -39,6 +39,12 @@ class DrivePathService
             $cleanPath = '';
         }
 
+        $firstSegment = explode('/', $cleanPath)[0] ?? '';
+
+        if ($firstSegment === '.trash') {
+            abort(404, 'The requested file or folder was not found.');
+        }
+
         $diskRelative = $cleanPath === ''
             ? $user->storageRelativePath()
             : $user->storageRelativePath().'/'.$cleanPath;

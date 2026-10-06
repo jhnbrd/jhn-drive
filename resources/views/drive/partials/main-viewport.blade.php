@@ -11,7 +11,9 @@
             @include('drive.partials.upload-progress')
             @include('drive.partials.home')
             @include('drive.partials.drive-browser')
+            @include('drive.partials.search')
             @include('drive.partials.shared-links')
+            @include('drive.partials.trash')
         </main>
     </div>
 

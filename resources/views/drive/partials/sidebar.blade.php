@@ -33,7 +33,7 @@
         </button>
     </div>
 
-    <div class="relative mb-5" x-data="{ openNew: false }">
+    <div x-show="viewSection !== 'trash'" class="relative mb-5" x-data="{ openNew: false }">
         <button type="button"
                 class="jhn-button-primary w-full"
                 @click="openNew = !openNew"
@@ -93,6 +93,16 @@
         </button>
         <button type="button"
                 class="jhn-nav-item"
+                :class="viewSection === 'search' && 'jhn-nav-item-active'"
+                @click="switchSection('search'); mobileSidebarOpen = false">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" stroke-width="2"/>
+                <path stroke-linecap="round" stroke-width="2" d="M20 20l-4-4"/>
+            </svg>
+            Search
+        </button>
+        <button type="button"
+                class="jhn-nav-item"
                 :class="viewSection === 'shared' && 'jhn-nav-item-active'"
                 @click="switchSection('shared'); mobileSidebarOpen = false">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -100,6 +110,16 @@
             </svg>
             Shared links
             <span class="ml-auto rounded bg-slate-800 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-400" x-text="sharedItems.length"></span>
+        </button>
+        <button type="button"
+                class="jhn-nav-item"
+                :class="viewSection === 'trash' && 'jhn-nav-item-active'"
+                @click="switchSection('trash'); mobileSidebarOpen = false">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 7h14m-9 4v6m4-6v6M9 7l1-3h4l1 3m-8 0l1 13h8l1-13"/>
+            </svg>
+            Trash
+            <span class="ml-auto rounded bg-slate-800 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-400" x-text="trashItems.length"></span>
         </button>
         <a href="{{ route('secret.pin') }}" class="jhn-nav-item">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

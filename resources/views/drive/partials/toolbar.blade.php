@@ -25,9 +25,17 @@
                 </div>
             </template>
         </div>
+        <div x-show="viewSection === 'search'" class="flex items-center gap-2">
+            <h2 class="truncate text-sm font-semibold text-white">Search</h2>
+            <span class="hidden text-[11px] text-slate-500 sm:inline">Entire Drive</span>
+        </div>
         <div x-show="viewSection === 'shared'" class="flex items-center gap-2">
             <h2 class="truncate text-sm font-semibold text-white">Shared links</h2>
             <span class="rounded bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300" x-text="sharedItems.length + ' active'"></span>
+        </div>
+        <div x-show="viewSection === 'trash'" class="flex items-center gap-2">
+            <h2 class="truncate text-sm font-semibold text-white">Trash</h2>
+            <span class="rounded bg-rose-400/10 px-2 py-0.5 text-[10px] font-medium text-rose-300" x-text="trashItems.length + (trashItems.length === 1 ? ' item' : ' items')"></span>
         </div>
     </div>
 
@@ -40,7 +48,8 @@
             </svg>
             <input type="search"
                    x-model="searchQuery"
-                   :placeholder="viewSection === 'drive' ? 'Filter this folder' : 'Filter shared links'"
+                   @input.debounce.350ms="handleSearchInput()"
+                   :placeholder="['drive', 'search'].includes(viewSection) ? 'Search entire Drive' : (viewSection === 'trash' ? 'Filter Trash' : 'Filter shared links')"
                    class="h-10 w-full rounded-lg border border-slate-700 bg-[#0b1017] pl-9 pr-3 text-xs text-white placeholder-slate-500 outline-none transition focus:border-cyan-400">
         </label>
 
@@ -69,8 +78,8 @@
 
         <button type="button"
                 class="jhn-icon-button"
-                @click="viewSection === 'home' ? loadHome(true) : (viewSection === 'drive' ? loadFiles(currentPath) : loadSharedLinks())"
-                :class="(isLoading || isHomeLoading) && 'animate-spin text-cyan-300'"
+                @click="viewSection === 'home' ? loadHome(true) : (viewSection === 'drive' ? loadFiles(currentPath) : (viewSection === 'search' ? runSearch() : (viewSection === 'trash' ? loadTrash() : loadSharedLinks())))"
+                :class="(isLoading || isHomeLoading || isTrashLoading || isSearchLoading) && 'animate-spin text-cyan-300'"
                 aria-label="Refresh">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5m11 11v-5h-5M5.5 15A7 7 0 0018 17m.5-8A7 7 0 006 7"/>

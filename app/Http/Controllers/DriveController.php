@@ -8,6 +8,7 @@ use App\Services\DrivePathService;
 use App\Services\FileMetadataService;
 use App\Services\FileResponseService;
 use App\Services\HomeSummaryService;
+use App\Services\TrashService;
 use App\Services\ZipArchiveService;
 use App\Support\UploadLimits;
 use Exception;
@@ -30,6 +31,7 @@ class DriveController extends Controller
         private readonly FileMetadataService $metadata,
         private readonly FileResponseService $responses,
         private readonly HomeSummaryService $homeSummary,
+        private readonly TrashService $trash,
         private readonly ZipArchiveService $archives,
     ) {}
 
@@ -120,7 +122,10 @@ class DriveController extends Controller
                 ], 404);
             }
 
-            $rawDirs = $disk->directories($diskPath);
+            $rawDirs = array_values(array_filter(
+                $disk->directories($diskPath),
+                fn (string $directory): bool => basename($directory) !== '.trash',
+            ));
             $rawFiles = $disk->files($diskPath);
 
             $items = [];
@@ -474,7 +479,7 @@ class DriveController extends Controller
     }
 
     /**
-     * Delete a file or directory.
+     * Move a file or directory into the user's recoverable Trash.
      */
     public function delete(Request $request): JsonResponse
     {
@@ -493,25 +498,13 @@ class DriveController extends Controller
             }
 
             $cleanDiskPath = $this->getSafePath($rawPath, true, $user);
-            $disk = Storage::disk($this->disk);
-            $fullPath = $disk->path($cleanDiskPath);
-
-            $deletedName = basename($cleanDiskPath);
-
-            if (is_dir($fullPath)) {
-                $disk->deleteDirectory($cleanDiskPath);
-                SharedLink::where('file_path', 'LIKE', $cleanDiskPath.'/%')
-                    ->orWhere('file_path', $cleanDiskPath)
-                    ->delete();
-            } else {
-                $disk->delete($cleanDiskPath);
-                SharedLink::where('file_path', $cleanDiskPath)->delete();
-            }
-            $this->homeSummary->invalidate($user);
+            $item = $this->trash->move($user, $cleanDiskPath);
+            $deletedName = $item->original_name;
 
             return response()->json([
                 'success' => true,
-                'message' => "'{$deletedName}' was deleted successfully.",
+                'message' => "'{$deletedName}' was moved to Trash.",
+                'trash_id' => $item->id,
             ]);
         } catch (HttpExceptionInterface $e) {
             throw $e;

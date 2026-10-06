@@ -3,8 +3,11 @@
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DriveController;
+use App\Http\Controllers\DriveSearchController;
+use App\Http\Controllers\DriveTransferController;
 use App\Http\Controllers\SecretController;
 use App\Http\Controllers\ShareController;
+use App\Http\Controllers\TrashController;
 use App\Http\Middleware\EnsureApproved;
 use App\Http\Middleware\EnsureSuperadmin;
 use Illuminate\Support\Facades\Route;
@@ -38,17 +41,24 @@ Route::middleware(['auth', EnsureApproved::class])->group(function () {
     Route::prefix('api')->name('drive.')->group(function () {
         Route::get('/files', [DriveController::class, 'listFiles'])->name('files');
         Route::get('/home', [DriveController::class, 'home'])->name('home');
+        Route::get('/search', [DriveSearchController::class, 'index'])->name('search');
         Route::post('/upload', [DriveController::class, 'upload'])->name('upload');
         Route::post('/mkdir', [DriveController::class, 'mkdir'])->name('mkdir');
         Route::post('/download-selection', [DriveController::class, 'downloadSelection'])->name('download-selection');
         Route::delete('/delete', [DriveController::class, 'delete'])->name('delete');
         Route::post('/rename', [DriveController::class, 'rename'])->name('rename');
+        Route::post('/transfer', [DriveTransferController::class, 'store'])->name('transfer');
         Route::get('/download', [DriveController::class, 'download'])->name('download');
         Route::get('/preview', [DriveController::class, 'preview'])->name('preview');
         Route::post('/share', [DriveController::class, 'share'])->name('share');
         Route::post('/unshare', [DriveController::class, 'unshare'])->name('unshare');
         Route::get('/shared', [DriveController::class, 'sharedList'])->name('shared');
         Route::get('/stats', [DriveController::class, 'stats'])->name('stats');
+        Route::get('/trash', [TrashController::class, 'index'])->name('trash.index');
+        Route::post('/trash/{id}/restore', [TrashController::class, 'restore'])->name('trash.restore');
+        Route::delete('/trash/{id}', [TrashController::class, 'destroy'])->name('trash.destroy');
+        Route::delete('/trash', [TrashController::class, 'empty'])->name('trash.empty');
+
     });
 
     // Superadmin Management Panel

@@ -68,7 +68,7 @@ class HomeSummaryService
             $directory = new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS);
             $filtered = new RecursiveCallbackFilterIterator(
                 $directory,
-                static fn (SplFileInfo $entry): bool => ! $entry->isLink() && $entry->getFilename() !== '.trash',
+                static fn (SplFileInfo $entry): bool => ! $entry->isLink(),
             );
             $files = new RecursiveIteratorIterator($filtered, RecursiveIteratorIterator::LEAVES_ONLY);
 
@@ -82,6 +82,7 @@ class HomeSummaryService
                     $modified = $file->getMTime();
                     $absolutePath = $file->getPathname();
                     $relativePath = ltrim(str_replace('\\', '/', substr($absolutePath, strlen($root))), '/');
+                    $isTrash = str_starts_with($relativePath, '.trash/');
                     $name = $file->getFilename();
                     $extension = strtolower($file->getExtension());
                     $mime = $this->metadata->mimeType($absolutePath, $name);
@@ -92,25 +93,27 @@ class HomeSummaryService
                     $categories[$category]['bytes'] += $size;
                     $categories[$category]['count']++;
 
-                    $recent[] = [
-                        'name' => $name,
-                        'path' => $relativePath,
-                        'parent_path' => str_contains($relativePath, '/') ? str_replace('\\', '/', dirname($relativePath)) : '',
-                        'category' => $category,
-                        'extension' => $extension,
-                        'size' => $size,
-                        'human_size' => $this->metadata->formatBytes($size),
-                        'modified_at' => date('Y-m-d H:i:s', $modified),
-                        'modified_human' => $this->metadata->formatTimeAgo($modified),
-                        'download_url' => route('drive.download', ['path' => $relativePath]),
-                        'preview_url' => in_array($category, ['image', 'video'], true)
-                            ? route('drive.preview', ['path' => $relativePath])
-                            : null,
-                        '_modified_timestamp' => $modified,
-                    ];
+                    if (! $isTrash) {
+                        $recent[] = [
+                            'name' => $name,
+                            'path' => $relativePath,
+                            'parent_path' => str_contains($relativePath, '/') ? str_replace('\\', '/', dirname($relativePath)) : '',
+                            'category' => $category,
+                            'extension' => $extension,
+                            'size' => $size,
+                            'human_size' => $this->metadata->formatBytes($size),
+                            'modified_at' => date('Y-m-d H:i:s', $modified),
+                            'modified_human' => $this->metadata->formatTimeAgo($modified),
+                            'download_url' => route('drive.download', ['path' => $relativePath]),
+                            'preview_url' => in_array($category, ['image', 'video'], true)
+                                ? route('drive.preview', ['path' => $relativePath])
+                                : null,
+                            '_modified_timestamp' => $modified,
+                        ];
 
-                    usort($recent, static fn (array $left, array $right): int => $right['_modified_timestamp'] <=> $left['_modified_timestamp']);
-                    $recent = array_slice($recent, 0, self::RECENT_LIMIT);
+                        usort($recent, static fn (array $left, array $right): int => $right['_modified_timestamp'] <=> $left['_modified_timestamp']);
+                        $recent = array_slice($recent, 0, self::RECENT_LIMIT);
+                    }
                 } catch (Throwable) {
                     // A file may disappear or become unreadable during a scan.
                 }

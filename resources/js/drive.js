@@ -1,9 +1,27 @@
-window.driveApp = function driveApp() {
+window.driveApp = function driveApp(userId = 'guest') {
+    const preferenceKey = name => `jhn_drive_${userId}_${name}`;
+    const readPreference = (name, allowed, fallback) => {
+        try {
+            const value = localStorage.getItem(preferenceKey(name));
+            return allowed.includes(value) ? value : fallback;
+        } catch {
+            return fallback;
+        }
+    };
+    const writePreference = (name, value) => {
+        try {
+            localStorage.setItem(preferenceKey(name), value);
+        } catch {
+            // Preferences are optional when browser storage is unavailable.
+        }
+    };
+
     return {
         viewSection: 'home',
         mobileSidebarOpen: false,
         items: [],
         sharedItems: [],
+        trashItems: [],
         home: {
             recent: [],
             shared: [],
@@ -15,8 +33,18 @@ window.driveApp = function driveApp() {
         currentPath: '',
         parentPath: '',
         breadcrumbs: [{ name: 'My Drive', path: '' }],
-        viewMode: localStorage.getItem('jhn_drive_view') || 'grid',
+        viewMode: readPreference('view', ['grid', 'list'], 'grid'),
+        driveFilter: readPreference('filter', ['all', 'folder', 'image', 'video', 'audio', 'document', 'archive'], 'all'),
+        driveSort: readPreference('sort', ['name', 'modified', 'size', 'type'], 'name'),
+        driveDirection: readPreference('direction', ['asc', 'desc'], 'asc'),
         searchQuery: '',
+        searchResults: [],
+        searchType: 'all',
+        searchSort: 'name',
+        searchDirection: 'asc',
+        searchTruncated: false,
+        isSearchLoading: false,
+        activeSearchRequest: null,
         isLoading: false,
         isUploading: false,
         uploadProgress: 0,
@@ -32,6 +60,15 @@ window.driveApp = function driveApp() {
         selectedPaths: [],
         selectionAnchor: null,
         isBulkDownloading: false,
+        showTransferModal: false,
+        transferOperation: 'move',
+        transferItems: [],
+        pickerPath: '',
+        pickerParentPath: '',
+        pickerBreadcrumbs: [{ name: 'My Drive', path: '' }],
+        pickerFolders: [],
+        isPickerLoading: false,
+        isTransferring: false,
         showDetailsModal: false,
         detailsItem: null,
         stats: {
@@ -44,6 +81,11 @@ window.driveApp = function driveApp() {
         newFolderName: '',
         showDeleteModal: false,
         targetDeleteItem: null,
+        showPermanentDeleteModal: false,
+        pendingPermanentTrashItem: null,
+        showEmptyTrashModal: false,
+        isTrashLoading: false,
+        isTrashMutating: false,
         showPreviewModal: false,
         previewFile: null,
         showRenameModal: false,
@@ -52,9 +94,13 @@ window.driveApp = function driveApp() {
         toasts: [],
 
         init() {
-            this.$watch('viewMode', val => localStorage.setItem('jhn_drive_view', val));
+            this.$watch('viewMode', value => writePreference('view', value));
+            this.$watch('driveFilter', value => writePreference('filter', value));
+            this.$watch('driveSort', value => writePreference('sort', value));
+            this.$watch('driveDirection', value => writePreference('direction', value));
             this.loadHome();
             this.loadSharedLinks();
+            this.loadTrash();
         },
 
         get folders() {
@@ -80,9 +126,39 @@ window.driveApp = function driveApp() {
         },
 
         get filteredItems() {
-            if (!this.searchQuery) return this.items;
-            const query = this.searchQuery.toLowerCase();
-            return this.items.filter(i => i.name.toLowerCase().includes(query));
+            const filtered = this.items.filter(item => this.matchesDriveFilter(item));
+            const direction = this.driveDirection === 'desc' ? -1 : 1;
+
+            return [...filtered].sort((left, right) => {
+                if (left.is_dir !== right.is_dir) return left.is_dir ? -1 : 1;
+
+                const comparison = {
+                    modified: () => String(left.modified_at).localeCompare(String(right.modified_at)),
+                    size: () => Number(left.size || 0) - Number(right.size || 0),
+                    type: () => String(left.category).localeCompare(String(right.category))
+                        || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }),
+                    name: () => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' })
+                }[this.driveSort]();
+
+                return comparison * direction;
+            });
+        },
+
+        matchesDriveFilter(item) {
+            if (this.driveFilter === 'all') return true;
+            if (this.driveFilter === 'folder') return item.is_dir;
+            if (this.driveFilter === 'document') {
+                return ['document', 'pdf', 'code'].includes(item.category);
+            }
+
+            return item.category === this.driveFilter;
+        },
+
+        resetDriveFilters() {
+            this.driveFilter = 'all';
+            this.driveSort = 'name';
+            this.driveDirection = 'asc';
+            this.clearSelection();
         },
 
         get filteredSharedItems() {
@@ -91,6 +167,15 @@ window.driveApp = function driveApp() {
             return this.sharedItems.filter(i => i.name.toLowerCase().includes(query));
         },
 
+
+        get filteredTrashItems() {
+            if (!this.searchQuery) return this.trashItems;
+            const query = this.searchQuery.toLowerCase();
+            return this.trashItems.filter(item =>
+                item.name.toLowerCase().includes(query)
+                || item.original_path.toLowerCase().includes(query)
+            );
+        },
         switchSection(section) {
             this.viewSection = section;
             this.searchQuery = '';
@@ -99,6 +184,11 @@ window.driveApp = function driveApp() {
                 this.loadHome();
             } else if (section === 'shared') {
                 this.loadSharedLinks();
+            } else if (section === 'trash') {
+                this.loadTrash();
+            } else if (section === 'search') {
+                this.searchResults = [];
+                this.searchTruncated = false;
             } else {
                 this.loadFiles(this.currentPath);
             }
@@ -157,6 +247,23 @@ window.driveApp = function driveApp() {
             }
         },
 
+        async loadTrash() {
+            this.isTrashLoading = true;
+            try {
+                const res = await fetch('/api/trash');
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    this.trashItems = data.items;
+                } else {
+                    this.showToast('Trash unavailable', data.message || 'Unable to load Trash.', 'error');
+                }
+            } catch (err) {
+                this.showToast('Network Error', err.message, 'error');
+            } finally {
+                this.isTrashLoading = false;
+            }
+        },
+
         async loadStats() {
             try {
                 const res = await fetch('/api/stats');
@@ -166,6 +273,66 @@ window.driveApp = function driveApp() {
                 }
             } catch (e) {
                 console.error('Failed to load drive stats', e);
+            }
+        },
+
+        handleSearchInput() {
+            if (!['drive', 'search'].includes(this.viewSection)) return;
+
+            if (!this.searchQuery.trim()) {
+                this.searchResults = [];
+                this.searchTruncated = false;
+                return;
+            }
+
+            this.viewSection = 'search';
+            this.runSearch();
+        },
+
+        async runSearch() {
+            const query = this.searchQuery.trim();
+            if (!query) {
+                this.searchResults = [];
+                this.searchTruncated = false;
+                return;
+            }
+
+            this.activeSearchRequest?.abort();
+            const controller = new AbortController();
+            this.activeSearchRequest = controller;
+            this.isSearchLoading = true;
+
+            try {
+                const params = new URLSearchParams({
+                    q: query,
+                    type: this.searchType,
+                    sort: this.searchSort,
+                    direction: this.searchDirection
+                });
+                const res = await fetch('/api/search?' + params.toString(), { signal: controller.signal });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || 'Search failed.');
+                this.searchResults = data.items;
+                this.searchTruncated = data.truncated;
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    this.showToast('Search unavailable', err.message, 'error');
+                }
+            } finally {
+                if (this.activeSearchRequest === controller) {
+                    this.activeSearchRequest = null;
+                    this.isSearchLoading = false;
+                }
+            }
+        },
+
+        openSearchResult(item) {
+            if (item.is_dir) {
+                this.navigateTo(item.path);
+            } else if (item.preview_url) {
+                this.openMediaModal(item);
+            } else {
+                this.showItemDetails(item);
             }
         },
 
@@ -249,6 +416,90 @@ window.driveApp = function driveApp() {
         clearSelection() {
             this.selectedPaths = [];
             this.selectionAnchor = null;
+        },
+
+        openTransferDialog(items, operation) {
+            const selection = Array.isArray(items) ? items : [items];
+            this.transferItems = selection.filter(Boolean);
+            if (this.transferItems.length === 0) return;
+            this.transferOperation = operation;
+            this.showTransferModal = true;
+            this.activeMenu = null;
+            this.loadPickerFolder('');
+        },
+
+        closeTransferDialog() {
+            if (this.isTransferring) return;
+            this.showTransferModal = false;
+            this.transferItems = [];
+            this.pickerFolders = [];
+        },
+
+        async loadPickerFolder(path = '') {
+            this.isPickerLoading = true;
+            try {
+                const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`);
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || 'Unable to load folders.');
+                this.pickerPath = data.current_path;
+                this.pickerParentPath = data.parent_path;
+                this.pickerBreadcrumbs = data.breadcrumbs;
+                this.pickerFolders = data.items.filter(item => item.is_dir);
+            } catch (err) {
+                this.showToast('Folder picker unavailable', err.message, 'error');
+            } finally {
+                this.isPickerLoading = false;
+            }
+        },
+
+        transferDestinationInvalid(path) {
+            return this.transferItems.some(item =>
+                item.is_dir && (path === item.path || path.startsWith(item.path + '/'))
+            );
+        },
+
+        async executeTransfer() {
+            if (this.isTransferring || this.transferDestinationInvalid(this.pickerPath)) return;
+            this.isTransferring = true;
+            try {
+                const res = await fetch('/api/transfer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    body: JSON.stringify({
+                        operation: this.transferOperation,
+                        paths: this.transferItems.map(item => item.path),
+                        destination: this.pickerPath
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || 'The operation failed.');
+                this.showToast(
+                    this.transferOperation === 'move' ? 'Items moved' : 'Items copied',
+                    data.message,
+                    'success'
+                );
+                this.showTransferModal = false;
+                this.transferItems = [];
+                this.clearSelection();
+                await Promise.all([
+                    this.loadFiles(this.currentPath),
+                    this.loadStats(),
+                    this.loadHome(true),
+                    this.loadSharedLinks()
+                ]);
+            } catch (err) {
+                this.showToast(
+                    this.transferOperation === 'move' ? 'Move failed' : 'Copy failed',
+                    err.message,
+                    'error'
+                );
+            } finally {
+                this.isTransferring = false;
+            }
         },
 
         activateItem(item, event = null) {
@@ -397,7 +648,7 @@ window.driveApp = function driveApp() {
                 const data = await res.json();
                 if (data.success) {
                     this.showDeleteModal = false;
-                    this.showToast('Deleted', data.message, 'success');
+                    this.showToast('Moved to Trash', data.message, 'success');
                     if (this.viewSection === 'home') {
                         this.loadHome(true);
                     } else {
@@ -405,6 +656,8 @@ window.driveApp = function driveApp() {
                     }
                     this.loadStats();
                     this.loadSharedLinks();
+                    this.loadTrash();
+                    this.targetDeleteItem = null;
                 } else {
                     this.showToast('Error', data.message || 'Delete failed.', 'error');
                 }
@@ -413,6 +666,80 @@ window.driveApp = function driveApp() {
             }
         },
 
+        async restoreTrashItem(item) {
+            if (this.isTrashMutating) return;
+            this.isTrashMutating = true;
+            try {
+                const res = await fetch(`/api/trash/${item.id}/restore`, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    }
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || 'Restore failed.');
+                this.showToast('Restored', data.message, 'success');
+                await Promise.all([this.loadTrash(), this.loadStats(), this.loadHome(true)]);
+            } catch (err) {
+                this.showToast('Restore failed', err.message, 'error');
+            } finally {
+                this.isTrashMutating = false;
+            }
+        },
+
+        confirmPermanentDelete(item) {
+            this.pendingPermanentTrashItem = item;
+            this.showPermanentDeleteModal = true;
+        },
+
+        async permanentlyDeleteTrashItem() {
+            if (!this.pendingPermanentTrashItem || this.isTrashMutating) return;
+            this.isTrashMutating = true;
+            try {
+                const res = await fetch(`/api/trash/${this.pendingPermanentTrashItem.id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    }
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || 'Permanent deletion failed.');
+                this.showPermanentDeleteModal = false;
+                this.pendingPermanentTrashItem = null;
+                this.showToast('Permanently deleted', data.message, 'success');
+                await Promise.all([this.loadTrash(), this.loadStats(), this.loadHome(true)]);
+            } catch (err) {
+                this.showToast('Delete failed', err.message, 'error');
+            } finally {
+                this.isTrashMutating = false;
+            }
+        },
+
+        async emptyTrash() {
+            if (this.isTrashMutating) return;
+            this.isTrashMutating = true;
+            try {
+                const res = await fetch('/api/trash', {
+                    method: 'DELETE',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    }
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || 'Trash could not be emptied.');
+                this.showEmptyTrashModal = false;
+                this.showToast('Trash emptied', data.message, 'success');
+                await Promise.all([this.loadTrash(), this.loadStats(), this.loadHome(true)]);
+            } catch (err) {
+                this.showToast('Empty Trash failed', err.message, 'error');
+            } finally {
+                this.isTrashMutating = false;
+            }
+
+        },
         renameItem(item) {
             this.renameTarget = item;
             this.renameName = item.name;
